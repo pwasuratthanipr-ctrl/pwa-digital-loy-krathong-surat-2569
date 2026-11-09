@@ -1,0 +1,8 @@
+{
+  "name": "PWA Digital Loy Krathong 2026",
+  "description": "ระบบลอยกระทงออนไลน์ ส่งความสุข ไม่เพิ่มขยะ ประจำปี 2569 การประปาส่วนภูมิภาคสาขาสุราษฎร์ธานี (ชั้นพิเศษ) พร้อมระบบสถิติและส่งเสริมบริการออนไลน์",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

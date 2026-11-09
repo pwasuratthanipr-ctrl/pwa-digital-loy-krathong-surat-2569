@@ -1,0 +1,17 @@
+{
+  "name": "PWA Digital Loy Krathong 2026 - กปภ.สาขาสุราษฎร์ธานี (ชั้นพิเศษ)",
+  "short_name": "ลอยกระทง กปภ.",
+  "description": "ลอยกระทงออนไลน์ ส่งความสุข ไม่เพิ่มขยะ การประปาส่วนภูมิภาคสาขาสุราษฎร์ธานี (ชั้นพิเศษ)",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#073B66",
+  "theme_color": "#0077B6",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
