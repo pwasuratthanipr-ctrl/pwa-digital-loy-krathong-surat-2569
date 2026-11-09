@@ -12,6 +12,7 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
   const [user, setUser] = useState<AdminProfile | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(false);
+  const [isSoundWaiting, setIsSoundWaiting] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -19,8 +20,9 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
     setUser(AuthService.getUser());
 
     // Sync sound state from soundService
-    const unsubscribe = soundService.subscribe((playing) => {
+    const unsubscribe = soundService.subscribe((playing, waiting) => {
       setSoundEnabled(playing);
+      setIsSoundWaiting(waiting && !playing);
     });
 
     const handleBeforeInstall = (e: any) => {
@@ -116,12 +118,16 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
               className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all shadow-sm cursor-pointer ${
                 soundEnabled
                   ? 'bg-amber-400/20 text-amber-300 border-amber-400/50 shadow-amber-950/40 ring-1 ring-amber-400/30'
+                  : isSoundWaiting
+                  ? 'bg-amber-500/20 text-amber-200 border-amber-400 animate-pulse shadow-md ring-1 ring-amber-300/40'
                   : 'bg-white/5 text-slate-300 hover:text-white hover:bg-white/10 border-cyan-500/20'
               }`}
               title={soundEnabled ? 'กดเพื่อปิดเพลงลอยกระทง' : 'กดเพื่อเปิดเพลงลอยกระทง (ดนตรีไทยบรรเลงเบาๆ)'}
             >
-              <Music className={`w-3.5 h-3.5 ${soundEnabled ? 'text-amber-300 animate-bounce' : 'text-slate-400'}`} />
-              <span>{soundEnabled ? '🎵 เพลงลอยกระทง (เปิด)' : 'เปิดเพลงลอยกระทง'}</span>
+              <Music className={`w-3.5 h-3.5 ${soundEnabled ? 'text-amber-300 animate-bounce' : isSoundWaiting ? 'text-amber-300 animate-spin' : 'text-slate-400'}`} />
+              <span>
+                {soundEnabled ? '🎵 เพลงลอยกระทง (เปิด)' : isSoundWaiting ? '🎵 คลิกเพื่อเปิดเพลง' : 'เปิดเพลงลอยกระทง'}
+              </span>
             </button>
 
             {/* PWA Install Button (if available) */}
@@ -172,12 +178,16 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
             <button
               onClick={handleToggleMusic}
               className={`p-2 rounded-lg border text-xs transition-colors cursor-pointer ${
-                soundEnabled ? 'bg-amber-400/20 text-amber-300 border-amber-400/50 shadow' : 'bg-white/5 text-slate-300 border-white/10'
+                soundEnabled
+                  ? 'bg-amber-400/20 text-amber-300 border-amber-400/50 shadow'
+                  : isSoundWaiting
+                  ? 'bg-amber-500/25 text-amber-200 border-amber-400 animate-pulse ring-1 ring-amber-300/50 shadow-md'
+                  : 'bg-white/5 text-slate-300 border-white/10'
               }`}
-              title={soundEnabled ? 'ปิดเพลงลอยกระทง' : 'เปิดเพลงลอยกระทง'}
+              title={soundEnabled ? 'ปิดเพลงลอยกระทง' : isSoundWaiting ? 'แตะเพื่อเปิดเพลงลอยกระทง' : 'เปิดเพลงลอยกระทง'}
               aria-label="Toggle Loy Krathong Music"
             >
-              <Music className={`w-4 h-4 ${soundEnabled ? 'text-amber-300 animate-pulse' : 'text-slate-300'}`} />
+              <Music className={`w-4 h-4 ${soundEnabled ? 'text-amber-300 animate-pulse' : isSoundWaiting ? 'text-amber-300 animate-bounce' : 'text-slate-300'}`} />
             </button>
 
             <button

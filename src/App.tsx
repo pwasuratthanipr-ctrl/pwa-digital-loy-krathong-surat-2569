@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { Music } from 'lucide-react';
 import { Navbar } from './components/common/Navbar';
 import { Footer } from './components/common/Footer';
 import { HomePage } from './pages/HomePage';
@@ -16,6 +17,7 @@ import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { AdminLoginPage } from './pages/admin/AdminLoginPage';
 import { AdminDashboardPage } from './pages/admin/AdminDashboardPage';
 import { AuthService } from './services/api';
+import { soundService } from './services/soundService';
 import { AdminProfile, KrathongTypeId } from './types';
 
 export default function App() {
@@ -27,9 +29,18 @@ export default function App() {
   const [participantCode, setParticipantCode] = useState<string>('');
   const [floatedAt, setFloatedAt] = useState<string>('');
   const [currentUser, setCurrentUser] = useState<AdminProfile | null>(null);
+  const [isMusicWaiting, setIsMusicWaiting] = useState<boolean>(false);
 
-  // Initialize and handle back/forward browser history
+  // Initialize and handle back/forward browser history & auto-play background music
   useEffect(() => {
+    // Automatically start background music on page load
+    soundService.autoStartOnLoad();
+
+    // Subscribe to sound state to know if browser blocked autoplay awaiting user gesture
+    const unsub = soundService.subscribe((playing, waiting) => {
+      setIsMusicWaiting(waiting && !playing);
+    });
+
     // Check initial user session
     const u = AuthService.getUser();
     if (u) setCurrentUser(u);
@@ -44,7 +55,10 @@ export default function App() {
       setCurrentPath(window.location.pathname || '/');
     };
     window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    return () => {
+      unsub();
+      window.removeEventListener('popstate', handlePopState);
+    };
   }, []);
 
   const navigateTo = (path: string) => {
@@ -179,6 +193,23 @@ export default function App() {
 
       {/* Universal Footer */}
       <Footer onNavigate={navigateTo} />
+
+      {/* Floating Autoplay Activation Pill - appears only if browser autoplay policy delays playback */}
+      {isMusicWaiting && (
+        <aside
+          role="status"
+          aria-live="polite"
+          onClick={() => {
+            soundService.startBgm();
+          }}
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 px-5 py-3 rounded-full bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-slate-950 font-heading font-extrabold text-xs sm:text-sm shadow-2xl shadow-amber-950/90 border-2 border-white/80 cursor-pointer animate-bounce hover:scale-105 active:scale-95 transition-all"
+        >
+          <div className="w-6 h-6 rounded-full bg-slate-950/20 flex items-center justify-center">
+            <Music className="w-3.5 h-3.5 text-slate-950 animate-pulse" />
+          </div>
+          <span>แตะที่นี่เพื่อเปิดเพลงลอยกระทง 🎵</span>
+        </aside>
+      )}
     </div>
   );
 }

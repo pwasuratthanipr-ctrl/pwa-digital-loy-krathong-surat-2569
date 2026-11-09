@@ -8,16 +8,18 @@
 class SoundService {
   private ctx: AudioContext | null = null;
   private isBgmPlaying: boolean = false;
+  private userExplicitlyMuted: boolean = false;
+  private isWaitingForGesture: boolean = false;
   private bgmGainNode: GainNode | null = null;
   private sfxGainNode: GainNode | null = null;
   private bgmTimeoutId: any = null;
   private waterNoiseNode: AudioNode | null = null;
   private waterNoiseGain: GainNode | null = null;
   private activeBgmOscillators: OscillatorNode[] = [];
-  private listeners: Array<(playing: boolean) => void> = [];
+  private listeners: Array<(playing: boolean, waiting: boolean) => void> = [];
 
   constructor() {
-    // Lazy initialized on user gesture
+    // Lazy initialized on user gesture or immediate page load
   }
 
   private initContext() {
@@ -34,46 +36,109 @@ class SoundService {
       this.sfxGainNode = this.ctx.createGain();
       this.sfxGainNode.gain.setValueAtTime(0.35, this.ctx.currentTime);
       this.sfxGainNode.connect(this.ctx.destination);
-    }
 
-    if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      // Listen for state change
+      this.ctx.onstatechange = () => {
+        if (this.ctx && this.ctx.state === 'running' && !this.userExplicitlyMuted && !this.isBgmPlaying) {
+          this.executeStartLoop();
+        }
+      };
     }
   }
 
-  public subscribe(listener: (playing: boolean) => void) {
+  public subscribe(listener: (playing: boolean, waiting: boolean) => void) {
     this.listeners.push(listener);
-    listener(this.isBgmPlaying);
+    listener(this.isBgmPlaying, this.isWaitingForGesture);
     return () => {
       this.listeners = this.listeners.filter((l) => l !== listener);
     };
   }
 
   private notify() {
-    this.listeners.forEach((l) => l(this.isBgmPlaying));
+    this.listeners.forEach((l) => l(this.isBgmPlaying, this.isWaitingForGesture));
   }
 
   public isPlaying(): boolean {
     return this.isBgmPlaying;
   }
 
+  public isWaiting(): boolean {
+    return this.isWaitingForGesture;
+  }
+
   public toggleBgm(): boolean {
-    if (this.isBgmPlaying) {
+    if (this.isBgmPlaying || this.isWaitingForGesture) {
+      this.userExplicitlyMuted = true;
+      this.isWaitingForGesture = false;
       this.stopBgm();
       return false;
     } else {
+      this.userExplicitlyMuted = false;
       this.startBgm();
       return true;
     }
   }
 
+  // Auto-start music when web page opens, handling browser autoplay policy smoothly
+  public autoStartOnLoad() {
+    this.userExplicitlyMuted = false;
+    this.initContext();
+
+    // Try starting immediately
+    this.startBgm();
+
+    // Prepare global gesture unlocker (catches any click, tap, key, or pointer on the window)
+    const unlockEvents = ['pointerdown', 'mousedown', 'touchstart', 'touchend', 'click', 'keydown'];
+    const handleGesture = () => {
+      if (this.userExplicitlyMuted) return;
+
+      this.initContext();
+      if (this.ctx) {
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume().then(() => {
+            if (!this.userExplicitlyMuted) {
+              this.executeStartLoop();
+            }
+          }).catch(() => {});
+        } else if (!this.isBgmPlaying && !this.userExplicitlyMuted) {
+          this.executeStartLoop();
+        }
+      }
+
+      unlockEvents.forEach((evt) => window.removeEventListener(evt, handleGesture, true));
+    };
+
+    unlockEvents.forEach((evt) => {
+      window.addEventListener(evt, handleGesture, { passive: true, capture: true });
+    });
+  }
+
   // Start the soft Loy Krathong Thai instrumental melody loop
   public startBgm() {
+    this.userExplicitlyMuted = false;
     this.initContext();
     if (!this.ctx || !this.bgmGainNode) return;
 
+    if (this.ctx.state === 'suspended') {
+      this.isWaitingForGesture = true;
+      this.notify();
+      this.ctx.resume().then(() => {
+        if (this.ctx && this.ctx.state === 'running' && !this.userExplicitlyMuted) {
+          this.executeStartLoop();
+        }
+      }).catch(() => {});
+      return;
+    }
+
+    this.executeStartLoop();
+  }
+
+  private executeStartLoop() {
+    if (!this.ctx || !this.bgmGainNode || this.userExplicitlyMuted) return;
     if (this.isBgmPlaying) return;
+
     this.isBgmPlaying = true;
+    this.isWaitingForGesture = false;
 
     // Reset gain to active BGM level smoothly
     const now = this.ctx.currentTime;
@@ -92,6 +157,7 @@ class SoundService {
   // Stop BGM immediately - cancels all scheduled future notes instantly
   public stopBgm() {
     this.isBgmPlaying = false;
+    this.isWaitingForGesture = false;
 
     // 1. Clear upcoming loop timer
     if (this.bgmTimeoutId) {
