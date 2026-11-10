@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Sparkles, ArrowRight, ShieldCheck, Leaf, Waves, CheckCircle2, Calendar, Users, Eye } from 'lucide-react';
+import { Sparkles, ArrowRight, ShieldCheck, Leaf, Waves, CheckCircle2, Calendar, Users, Eye, FileText, ExternalLink } from 'lucide-react';
 import { TapiRiverCanvas } from '../components/river/TapiRiverCanvas';
-import { ApiService } from '../services/api';
-import { PublicStats } from '../types';
+import { StorageService, PublicStats, FloatingItem } from '../services/storageService';
 import { soundService } from '../services/soundService';
+import { APP_CONFIG } from '../config/appConfig';
 
 interface HomePageProps {
   onNavigate: (path: string) => void;
@@ -11,31 +11,21 @@ interface HomePageProps {
 
 export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
   const [stats, setStats] = useState<PublicStats | null>(null);
-  const [recentKrathongs, setRecentKrathongs] = useState<any[]>([]);
+  const [recentKrathongs, setRecentKrathongs] = useState<FloatingItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let mounted = true;
-    async function fetchData() {
-      try {
-        const [statsData, krathongsData] = await Promise.all([
-          ApiService.getPublicStats(),
-          ApiService.getRecentKrathongs(),
-        ]);
-        if (mounted) {
-          setStats(statsData);
-          setRecentKrathongs(krathongsData);
-        }
-      } catch (err) {
-        console.error('Failed to load initial data:', err);
-      } finally {
-        if (mounted) setLoading(false);
-      }
+    // Client-side local data loading (Instant, zero backend latency)
+    try {
+      const statsData = StorageService.getPublicStats();
+      const krathongsData = StorageService.getRecentKrathongs();
+      setStats(statsData);
+      setRecentKrathongs(krathongsData);
+    } catch (err) {
+      console.error('Failed to load local data:', err);
+    } finally {
+      setLoading(false);
     }
-    fetchData();
-    return () => {
-      mounted = false;
-    };
   }, []);
 
   return (

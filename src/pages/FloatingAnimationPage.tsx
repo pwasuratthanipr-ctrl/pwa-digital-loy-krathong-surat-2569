@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { FastForward, Sparkles, Waves, CheckCircle2 } from 'lucide-react';
 import { KrathongArt } from '../components/krathongs/KrathongArt';
-import { ApiService } from '../services/api';
+import { StorageService } from '../services/storageService';
 import { KrathongTypeId } from '../types';
 import { soundService } from '../services/soundService';
 
@@ -44,13 +44,12 @@ export const FloatingAnimationPage: React.FC<FloatingAnimationPageProps> = ({
     soundService.playWishRelease();
 
     try {
-      // Server submission creates participant record and returns unique code LK69-XXXXXX
-      const res = await ApiService.floatKrathong({
+      // Client-side local processing: generates unique code LK69-XXXXXX without database
+      const res = StorageService.floatKrathong({
         krathong_type: selectedKrathong,
         nickname: nickname.trim() || undefined,
         wish_text: wishText.trim(),
         share_consent: shareConsent,
-        source_channel: 'WEB_DIRECT',
       });
 
       setResultData(res);

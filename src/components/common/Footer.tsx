@@ -154,9 +154,15 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             สงวนลิขสิทธิ์ พ.ศ. ๒๕๖๙ การประปาส่วนภูมิภาคสาขาสุราษฎร์ธานี (ชั้นพิเศษ)
           </div>
           <div className="flex items-center gap-4">
-            <button onClick={() => onNavigate('/')} className="hover:text-slate-300">หน้าแรก</button>
-            <button onClick={() => onNavigate('/privacy')} className="hover:text-slate-300">นโยบายความเป็นส่วนตัว</button>
-            <button onClick={() => onNavigate('/admin/login')} className="hover:text-slate-300 text-sky-400">สำหรับเจ้าหน้าที่</button>
+            <button onClick={() => onNavigate('/')} className="hover:text-slate-300 cursor-pointer">หน้าแรก</button>
+            <button onClick={() => onNavigate('/privacy')} className="hover:text-slate-300 cursor-pointer">นโยบายความเป็นส่วนตัว</button>
+            <button
+              onClick={() => onNavigate('/admin')}
+              className="hover:text-amber-300 text-amber-400/80 flex items-center gap-1 cursor-pointer"
+              title="สำหรับเจ้าหน้าที่ตรวจสอบสถิติและดาวน์โหลดรายงาน"
+            >
+              <span>สำหรับผู้ดูแลระบบ (สถิติกิจกรรม)</span>
+            </button>
           </div>
         </div>
       </div>

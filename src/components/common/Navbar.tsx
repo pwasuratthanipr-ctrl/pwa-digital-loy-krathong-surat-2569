@@ -1,8 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Waves, Sparkles, Shield, User, Download, Volume2, VolumeX, Menu, X, ArrowRight, Music } from 'lucide-react';
-import { AuthService } from '../../services/api';
+import {
+  Sparkles,
+  Download,
+  Volume2,
+  Volume1,
+  VolumeX,
+  Play,
+  Square,
+  Menu,
+  X,
+  BarChart3,
+  ShieldCheck,
+} from 'lucide-react';
 import { soundService } from '../../services/soundService';
-import { AdminProfile } from '../../types';
+import { APP_CONFIG } from '../../config/appConfig';
 
 interface NavbarProps {
   currentPath: string;
@@ -10,19 +21,17 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
-  const [user, setUser] = useState<AdminProfile | null>(null);
-  const [soundEnabled, setSoundEnabled] = useState(false);
-  const [isSoundWaiting, setIsSoundWaiting] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [volume, setVolume] = useState(0.25);
+  const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    setUser(AuthService.getUser());
-
-    // Sync sound state from soundService
-    const unsubscribe = soundService.subscribe((playing, waiting) => {
-      setSoundEnabled(playing);
-      setIsSoundWaiting(waiting && !playing);
+    // Sync sound state and volume from soundService
+    const unsubscribe = soundService.subscribe((playing, currentVol) => {
+      setIsPlaying(playing);
+      setVolume(currentVol);
     });
 
     const handleBeforeInstall = (e: any) => {
@@ -46,9 +55,16 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
     }
   };
 
-  // Toggle soft Loy Krathong background melody
+  // Play / Stop toggle
   const handleToggleMusic = () => {
     soundService.toggleBgm();
+  };
+
+  // Volume slider change
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseFloat(e.target.value);
+    setVolume(val);
+    soundService.setBgmVolume(val);
   };
 
   const navItems = [
@@ -59,7 +75,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
   ];
 
   return (
-    <header className="sticky top-0 z-50 w-full bg-[#073B66]/90 backdrop-blur-md border-b border-cyan-500/20 shadow-lg">
+    <header className="sticky top-0 z-50 w-full bg-[#073B66]/95 backdrop-blur-md border-b border-cyan-500/20 shadow-lg">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-18">
           
@@ -70,7 +86,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
           >
             {/* Official PWA Logo */}
             <img
-              src="/assets/aistudio/logo_PWA_4b69b17d.jpg"
+              src={APP_CONFIG.ORGANIZATION.LOGO_PATH}
               alt="โลโก้ การประปาส่วนภูมิภาค"
               className="w-11 h-11 rounded-xl object-contain bg-white/10 p-0.5 border border-white/20 shadow-md shadow-cyan-950/50 group-hover:scale-105 transition-transform"
             />
@@ -90,15 +106,15 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
             </div>
           </div>
 
-          {/* Desktop Navigation */}
+          {/* Desktop Navigation Links */}
           <nav className="hidden md:flex items-center gap-1">
-            {navItems.map(item => {
+            {navItems.map((item) => {
               const isActive = currentPath === item.path;
               return (
                 <button
                   key={item.path}
                   onClick={() => onNavigate(item.path)}
-                  className={`px-3.5 py-2 rounded-lg text-sm font-medium transition-all ${
+                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer ${
                     isActive
                       ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/40 shadow-sm'
                       : 'text-slate-200 hover:text-white hover:bg-white/5'
@@ -110,84 +126,104 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
             })}
           </nav>
 
-          {/* Right Action Buttons */}
+          {/* Right Action Controls */}
           <div className="hidden lg:flex items-center gap-3">
-            {/* Loy Krathong Background Music Toggle */}
+            
+            {/* Audio Controller: Play/Stop & Volume Slider */}
+            <div className="flex items-center bg-slate-900/80 border border-cyan-500/30 rounded-xl p-1 gap-1.5 shadow-inner">
+              {/* Play / Stop Button */}
+              <button
+                onClick={handleToggleMusic}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  isPlaying
+                    ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 shadow'
+                    : 'bg-white/5 text-slate-300 hover:text-white hover:bg-white/10'
+                }`}
+                title={isPlaying ? 'กดเพื่อหยุดเพลงลอยกระทง' : 'กดเพื่อเริ่มเล่นเพลงลอยกระทง'}
+              >
+                {isPlaying ? (
+                  <>
+                    <Square className="w-3 h-3 fill-current" />
+                    <span>หยุดเพลง</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3 h-3 fill-current" />
+                    <span>เปิดเพลง</span>
+                  </>
+                )}
+              </button>
+
+              {/* Volume Button & Popover Slider */}
+              <div className="relative flex items-center pr-1.5">
+                <button
+                  onClick={() => setShowVolumeSlider(!showVolumeSlider)}
+                  className="p-1.5 text-slate-300 hover:text-amber-300 transition-colors cursor-pointer"
+                  title={`ระดับเสียง: ${Math.round(volume * 100)}%`}
+                >
+                  {volume === 0 ? (
+                    <VolumeX className="w-4 h-4 text-slate-400" />
+                  ) : volume < 0.5 ? (
+                    <Volume1 className="w-4 h-4 text-cyan-300" />
+                  ) : (
+                    <Volume2 className="w-4 h-4 text-amber-300" />
+                  )}
+                </button>
+
+                {/* Inline Slider on Desktop */}
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={volume}
+                  onChange={handleVolumeChange}
+                  className="w-18 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                  title={`ปรับเสียง: ${Math.round(volume * 100)}%`}
+                />
+              </div>
+            </div>
+
+            {/* Admin Stats Button (No Google Forms) */}
             <button
-              onClick={handleToggleMusic}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all shadow-sm cursor-pointer ${
-                soundEnabled
-                  ? 'bg-amber-400/20 text-amber-300 border-amber-400/50 shadow-amber-950/40 ring-1 ring-amber-400/30'
-                  : isSoundWaiting
-                  ? 'bg-amber-500/20 text-amber-200 border-amber-400 animate-pulse shadow-md ring-1 ring-amber-300/40'
-                  : 'bg-white/5 text-slate-300 hover:text-white hover:bg-white/10 border-cyan-500/20'
+              onClick={() => onNavigate('/admin')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                currentPath === '/admin'
+                  ? 'bg-amber-500/25 text-amber-300 border-amber-400/50 shadow-sm'
+                  : 'bg-slate-900/80 text-slate-300 hover:text-white hover:bg-slate-800 border-cyan-500/30'
               }`}
-              title={soundEnabled ? 'กดเพื่อปิดเพลงลอยกระทง' : 'กดเพื่อเปิดเพลงลอยกระทง (ดนตรีไทยบรรเลงเบาๆ)'}
+              title="ตรวจสอบสถิติผู้เข้าใช้งานและผู้ร่วมกิจกรรมสำหรับผู้ดูแลระบบ"
             >
-              <Music className={`w-3.5 h-3.5 ${soundEnabled ? 'text-amber-300 animate-bounce' : isSoundWaiting ? 'text-amber-300 animate-spin' : 'text-slate-400'}`} />
-              <span>
-                {soundEnabled ? '🎵 เพลงลอยกระทง (เปิด)' : isSoundWaiting ? '🎵 คลิกเพื่อเปิดเพลง' : 'เปิดเพลงลอยกระทง'}
-              </span>
+              <BarChart3 className="w-3.5 h-3.5 text-amber-300" />
+              <span>สถิติผู้ดูแลระบบ</span>
             </button>
-
-            {/* PWA Install Button (if available) */}
-            {deferredPrompt && (
-              <button
-                onClick={handleInstallClick}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-700/60 hover:bg-cyan-600 text-white text-xs font-medium rounded-lg border border-cyan-400/30 shadow transition-all"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>ติดตั้ง PWA</span>
-              </button>
-            )}
-
-            {/* Staff / Admin Portal Link */}
-            {user ? (
-              <button
-                onClick={() => onNavigate('/admin/dashboard')}
-                className="flex items-center gap-2 px-3.5 py-1.5 bg-gradient-to-r from-amber-500/20 to-amber-600/20 border border-amber-400/40 text-amber-200 hover:text-white hover:border-amber-400 rounded-lg text-xs font-medium transition-all shadow"
-              >
-                <Shield className="w-3.5 h-3.5 text-amber-400" />
-                <span>แดชบอร์ด ({user.role})</span>
-              </button>
-            ) : (
-              <button
-                onClick={() => onNavigate('/admin/login')}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-sky-200 hover:text-white hover:bg-white/10 rounded-lg border border-cyan-400/20 transition-all"
-              >
-                <User className="w-3.5 h-3.5" />
-                <span>เจ้าหน้าที่ กปภ.</span>
-              </button>
-            )}
 
             {/* Start Float CTA */}
             {currentPath !== '/krathong' && currentPath !== '/wish' && currentPath !== '/float' && (
               <button
                 onClick={() => onNavigate('/krathong')}
-                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#0077B6] to-[#00B4D8] hover:from-[#0284C7] hover:to-[#38BDF8] text-white text-sm font-semibold rounded-lg shadow-md shadow-cyan-950/40 border border-white/20 transition-all active:scale-95 cursor-pointer"
+                className="flex items-center gap-2 px-3.5 py-1.5 bg-gradient-to-r from-[#0077B6] to-[#00B4D8] hover:from-[#0284C7] hover:to-[#38BDF8] text-white text-xs font-semibold rounded-xl shadow-md border border-white/20 transition-all active:scale-95 cursor-pointer"
               >
-                <Sparkles className="w-4 h-4 text-amber-300" />
-                <span>เริ่มลอยกระทง</span>
+                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                <span>ลอยกระทง</span>
               </button>
             )}
           </div>
 
           {/* Mobile Action Controls */}
           <div className="flex md:hidden items-center gap-2">
-            {/* Mobile Music Toggle */}
+            {/* Mobile Music Play/Stop Toggle */}
             <button
               onClick={handleToggleMusic}
               className={`p-2 rounded-lg border text-xs transition-colors cursor-pointer ${
-                soundEnabled
-                  ? 'bg-amber-400/20 text-amber-300 border-amber-400/50 shadow'
-                  : isSoundWaiting
-                  ? 'bg-amber-500/25 text-amber-200 border-amber-400 animate-pulse ring-1 ring-amber-300/50 shadow-md'
+                isPlaying
+                  ? 'bg-amber-400 text-slate-950 border-amber-300 shadow'
                   : 'bg-white/5 text-slate-300 border-white/10'
               }`}
-              title={soundEnabled ? 'ปิดเพลงลอยกระทง' : isSoundWaiting ? 'แตะเพื่อเปิดเพลงลอยกระทง' : 'เปิดเพลงลอยกระทง'}
+              title={isPlaying ? 'หยุดเพลง' : 'เปิดเพลงลอยกระทง'}
               aria-label="Toggle Loy Krathong Music"
             >
-              <Music className={`w-4 h-4 ${soundEnabled ? 'text-amber-300 animate-pulse' : isSoundWaiting ? 'text-amber-300 animate-bounce' : 'text-slate-300'}`} />
+              {isPlaying ? <Square className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
             </button>
 
             <button
@@ -212,7 +248,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
       {/* Mobile Drawer */}
       {mobileMenuOpen && (
         <div className="md:hidden bg-[#073B66] border-b border-cyan-500/30 px-4 pt-2 pb-5 space-y-2">
-          {navItems.map(item => (
+          {navItems.map((item) => (
             <button
               key={item.path}
               onClick={() => {
@@ -229,41 +265,54 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
             </button>
           ))}
 
-          <div className="pt-2 border-t border-cyan-900/60 flex flex-col gap-2">
-            {user ? (
-              <button
-                onClick={() => {
-                  onNavigate('/admin/dashboard');
-                  setMobileMenuOpen(false);
-                }}
-                className="w-full text-left px-3 py-2 rounded-lg text-sm text-amber-300 bg-amber-500/10 border border-amber-400/30 flex items-center justify-between"
-              >
-                <span>เข้าสู่ระบบแดชบอร์ด ({user.role})</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            ) : (
-              <button
-                onClick={() => {
-                  onNavigate('/admin/login');
-                  setMobileMenuOpen(false);
-                }}
-                className="w-full text-left px-3 py-2 rounded-lg text-sm text-sky-200 hover:bg-white/5 flex items-center gap-2"
-              >
-                <User className="w-4 h-4" />
-                <span>เข้าสู่ระบบสำหรับเจ้าหน้าที่ กปภ.</span>
-              </button>
-            )}
-
-            {deferredPrompt && (
-              <button
-                onClick={handleInstallClick}
-                className="w-full text-left px-3 py-2 rounded-lg text-sm text-cyan-200 bg-cyan-900/40 border border-cyan-500/30 flex items-center gap-2"
-              >
-                <Download className="w-4 h-4" />
-                <span>ติดตั้ง PWA ลงหน้าจอมือถือ</span>
-              </button>
-            )}
+          {/* Mobile Volume Control */}
+          <div className="p-3 bg-slate-900/70 rounded-xl border border-cyan-800/60 space-y-1.5 mt-2">
+            <div className="flex items-center justify-between text-xs text-slate-300">
+              <span className="flex items-center gap-1.5">
+                <Volume2 className="w-4 h-4 text-amber-300" />
+                <span>ระดับเสียงเพลงประกอบ:</span>
+              </span>
+              <span className="font-mono text-amber-300">{Math.round(volume * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={volume}
+              onChange={handleVolumeChange}
+              className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-amber-400"
+            />
           </div>
+
+          {/* Admin Stats Link on Mobile (No Google Forms) */}
+          <div className="pt-2">
+            <button
+              onClick={() => {
+                onNavigate('/admin');
+                setMobileMenuOpen(false);
+              }}
+              className="w-full py-2.5 px-3 bg-gradient-to-r from-cyan-950 to-[#052949] border border-amber-400/40 text-amber-300 rounded-xl text-xs font-semibold flex items-center justify-between shadow"
+            >
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-amber-300" />
+                <span>สถิติสำหรับผู้ดูแลระบบ (Admin Dashboard)</span>
+              </div>
+              <span className="text-[10px] bg-amber-400/20 px-1.5 py-0.5 rounded border border-amber-400/30">
+                รหัส 1662
+              </span>
+            </button>
+          </div>
+
+          {deferredPrompt && (
+            <button
+              onClick={handleInstallClick}
+              className="w-full text-left px-3 py-2 rounded-lg text-sm text-cyan-200 bg-cyan-900/40 border border-cyan-500/30 flex items-center gap-2"
+            >
+              <Download className="w-4 h-4" />
+              <span>ติดตั้ง PWA ลงหน้าจอมือถือ</span>
+            </button>
+          )}
         </div>
       )}
     </header>

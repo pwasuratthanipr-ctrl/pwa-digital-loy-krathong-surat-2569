@@ -2,24 +2,28 @@
  * PWA Digital Loy Krathong 2026 - Audio & Sound Engine
  * Provides authentic, relaxing Thai Loy Krathong background music (BGM)
  * and interactive sound effects (SFX) using Web Audio API.
- * 100% client-side, zero latency, no external audio file dependencies.
+ * 
+ * Static Web Application: 100% client-side, zero latency, no external audio files.
+ * Features:
+ *  - Play / Stop controls
+ *  - Volume control (ปรับระดับเสียง 0% - 100%)
+ *  - Strict user-gesture compliance (ไม่เล่นอัตโนมัติหากผู้ใช้ไม่ได้กดเล่น)
  */
 
 class SoundService {
   private ctx: AudioContext | null = null;
   private isBgmPlaying: boolean = false;
-  private userExplicitlyMuted: boolean = false;
-  private isWaitingForGesture: boolean = false;
+  private currentVolume: number = 0.25; // Default 25% pleasant soft volume
   private bgmGainNode: GainNode | null = null;
   private sfxGainNode: GainNode | null = null;
   private bgmTimeoutId: any = null;
   private waterNoiseNode: AudioNode | null = null;
   private waterNoiseGain: GainNode | null = null;
   private activeBgmOscillators: OscillatorNode[] = [];
-  private listeners: Array<(playing: boolean, waiting: boolean) => void> = [];
+  private listeners: Array<(playing: boolean, volume: number) => void> = [];
 
   constructor() {
-    // Lazy initialized on user gesture or immediate page load
+    // Web Audio is initialized strictly upon explicit user interaction
   }
 
   private initContext() {
@@ -27,103 +31,75 @@ class SoundService {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       this.ctx = new AudioCtx();
 
-      // Master BGM Gain (soft background level)
+      // Master BGM Gain
       this.bgmGainNode = this.ctx.createGain();
-      this.bgmGainNode.gain.setValueAtTime(0.20, this.ctx.currentTime);
+      this.bgmGainNode.gain.setValueAtTime(this.currentVolume, this.ctx.currentTime);
       this.bgmGainNode.connect(this.ctx.destination);
 
-      // Master SFX Gain (clear, pleasant, crisp level)
+      // Master SFX Gain
       this.sfxGainNode = this.ctx.createGain();
       this.sfxGainNode.gain.setValueAtTime(0.35, this.ctx.currentTime);
       this.sfxGainNode.connect(this.ctx.destination);
+    }
 
-      // Listen for state change
-      this.ctx.onstatechange = () => {
-        if (this.ctx && this.ctx.state === 'running' && !this.userExplicitlyMuted && !this.isBgmPlaying) {
-          this.executeStartLoop();
-        }
-      };
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
     }
   }
 
-  public subscribe(listener: (playing: boolean, waiting: boolean) => void) {
+  public subscribe(listener: (playing: boolean, volume: number) => void) {
     this.listeners.push(listener);
-    listener(this.isBgmPlaying, this.isWaitingForGesture);
+    listener(this.isBgmPlaying, this.currentVolume);
     return () => {
       this.listeners = this.listeners.filter((l) => l !== listener);
     };
   }
 
   private notify() {
-    this.listeners.forEach((l) => l(this.isBgmPlaying, this.isWaitingForGesture));
+    this.listeners.forEach((l) => l(this.isBgmPlaying, this.currentVolume));
   }
 
   public isPlaying(): boolean {
     return this.isBgmPlaying;
   }
 
-  public isWaiting(): boolean {
-    return this.isWaitingForGesture;
+  public getBgmVolume(): number {
+    return this.currentVolume;
   }
 
+  // ปรับระดับเสียงดนตรีประกอบ (0.0 ถึง 1.0)
+  public setBgmVolume(vol: number) {
+    const clamped = Math.max(0, Math.min(1, vol));
+    this.currentVolume = clamped;
+
+    if (this.ctx && this.bgmGainNode && this.isBgmPlaying) {
+      const now = this.ctx.currentTime;
+      this.bgmGainNode.gain.cancelScheduledValues(now);
+      this.bgmGainNode.gain.setValueAtTime(clamped, now);
+    }
+
+    this.notify();
+  }
+
+  // สลับเล่น/หยุดเพลงบรรเลง (เรียกใช้เมื่อผู้ใช้กดปุ่มเท่านั้น)
   public toggleBgm(): boolean {
-    if (this.isBgmPlaying || this.isWaitingForGesture) {
-      this.userExplicitlyMuted = true;
-      this.isWaitingForGesture = false;
+    if (this.isBgmPlaying) {
       this.stopBgm();
       return false;
     } else {
-      this.userExplicitlyMuted = false;
       this.startBgm();
       return true;
     }
   }
 
-  // Auto-start music when web page opens, handling browser autoplay policy smoothly
-  public autoStartOnLoad() {
-    this.userExplicitlyMuted = false;
-    this.initContext();
-
-    // Try starting immediately
-    this.startBgm();
-
-    // Prepare global gesture unlocker (catches any click, tap, key, or pointer on the window)
-    const unlockEvents = ['pointerdown', 'mousedown', 'touchstart', 'touchend', 'click', 'keydown'];
-    const handleGesture = () => {
-      if (this.userExplicitlyMuted) return;
-
-      this.initContext();
-      if (this.ctx) {
-        if (this.ctx.state === 'suspended') {
-          this.ctx.resume().then(() => {
-            if (!this.userExplicitlyMuted) {
-              this.executeStartLoop();
-            }
-          }).catch(() => {});
-        } else if (!this.isBgmPlaying && !this.userExplicitlyMuted) {
-          this.executeStartLoop();
-        }
-      }
-
-      unlockEvents.forEach((evt) => window.removeEventListener(evt, handleGesture, true));
-    };
-
-    unlockEvents.forEach((evt) => {
-      window.addEventListener(evt, handleGesture, { passive: true, capture: true });
-    });
-  }
-
-  // Start the soft Loy Krathong Thai instrumental melody loop
+  // เริ่มเล่นเพลงบรรเลง (เล่นเฉพาะเมื่อมีการกดปุ่มจากผู้ใช้)
   public startBgm() {
-    this.userExplicitlyMuted = false;
     this.initContext();
     if (!this.ctx || !this.bgmGainNode) return;
 
     if (this.ctx.state === 'suspended') {
-      this.isWaitingForGesture = true;
-      this.notify();
       this.ctx.resume().then(() => {
-        if (this.ctx && this.ctx.state === 'running' && !this.userExplicitlyMuted) {
+        if (!this.isBgmPlaying) {
           this.executeStartLoop();
         }
       }).catch(() => {});
@@ -134,16 +110,15 @@ class SoundService {
   }
 
   private executeStartLoop() {
-    if (!this.ctx || !this.bgmGainNode || this.userExplicitlyMuted) return;
+    if (!this.ctx || !this.bgmGainNode) return;
     if (this.isBgmPlaying) return;
 
     this.isBgmPlaying = true;
-    this.isWaitingForGesture = false;
 
-    // Reset gain to active BGM level smoothly
+    // Reset gain to user-set volume level
     const now = this.ctx.currentTime;
     this.bgmGainNode.gain.cancelScheduledValues(now);
-    this.bgmGainNode.gain.setValueAtTime(0.20, now);
+    this.bgmGainNode.gain.setValueAtTime(this.currentVolume, now);
 
     this.notify();
 
@@ -154,10 +129,9 @@ class SoundService {
     this.playLoyKrathongSongLoop();
   }
 
-  // Stop BGM immediately - cancels all scheduled future notes instantly
+  // หยุดเพลงบรรเลงทันที ตัดเสียงใน 0 มิลลิวินาที
   public stopBgm() {
     this.isBgmPlaying = false;
-    this.isWaitingForGesture = false;
 
     // 1. Clear upcoming loop timer
     if (this.bgmTimeoutId) {
@@ -215,7 +189,7 @@ class SoundService {
       filter.Q.setValueAtTime(1.8, this.ctx.currentTime);
 
       const gain = this.ctx.createGain();
-      gain.gain.setValueAtTime(0.04, this.ctx.currentTime);
+      gain.gain.setValueAtTime(0.04 * (this.currentVolume / 0.25), this.ctx.currentTime);
 
       noise.connect(filter);
       filter.connect(gain);
@@ -278,7 +252,6 @@ class SoundService {
     osc3.connect(noteGain);
     noteGain.connect(this.bgmGainNode);
 
-    // Keep track of oscillators so we can stop them immediately if user clicks mute
     this.activeBgmOscillators.push(osc1, osc2, osc3);
 
     const cleanup = () => {
@@ -439,7 +412,6 @@ class SoundService {
     const gain = this.ctx.createGain();
 
     osc.type = 'sine';
-    // Frequency drops slightly like a real water droplet
     osc.frequency.setValueAtTime(1450, t);
     osc.frequency.exponentialRampToValueAtTime(780, t + 0.12);
 
@@ -457,34 +429,27 @@ class SoundService {
   /**
    * 2. Krathong Selection ("เสียงกระดิ่งแก้วประกายดาว สดใส")
    * เมื่อคลิกเลือกประเภทกระทงดิจิทัล 5 สไตล์
-   * เสียงคริสตัลใส กังวาน สดชื่น ระยิบระยับ (Bright Celestial Crystal Chime)
    */
   public playKrathongSelect() {
     this.initContext();
     if (!this.ctx || !this.sfxGainNode) return;
 
     const t = this.ctx.currentTime;
-
-    // Ascending bright crystal glockenspiel arpeggio
-    // G5, C6, E6, G6, C7 (High, crystalline, joyful)
     const notes = [783.99, 1046.50, 1318.51, 1567.98, 2093.00];
 
     notes.forEach((freq, idx) => {
       const noteStart = t + idx * 0.045;
       
-      // Fundamental crystal tone
       const osc = this.ctx!.createOscillator();
       const gain = this.ctx!.createGain();
       osc.type = 'sine';
       osc.frequency.setValueAtTime(freq, noteStart);
 
-      // Shimmer overtone (adds silvery crystal clarity)
       const shimmer = this.ctx!.createOscillator();
       const shimmerGain = this.ctx!.createGain();
       shimmer.type = 'triangle';
       shimmer.frequency.setValueAtTime(freq * 2.01, noteStart);
 
-      // Envelope: Fast crisp attack, bright sparkling sustain, clean decay
       gain.gain.setValueAtTime(0.001, noteStart);
       gain.gain.linearRampToValueAtTime(0.30, noteStart + 0.006);
       gain.gain.exponentialRampToValueAtTime(0.0001, noteStart + 0.38);
@@ -505,13 +470,12 @@ class SoundService {
       shimmer.stop(noteStart + 0.25);
     });
 
-    // Magical high fairy dust sparkle at the peak (2600Hz -> 3300Hz)
     const sparkleStart = t + 0.18;
     const sparkleOsc = this.ctx.createOscillator();
     const sparkleGain = this.ctx.createGain();
     sparkleOsc.type = 'sine';
-    sparkleOsc.frequency.setValueAtTime(2637.02, sparkleStart); // E7
-    sparkleOsc.frequency.exponentialRampToValueAtTime(3135.96, sparkleStart + 0.12); // G7
+    sparkleOsc.frequency.setValueAtTime(2637.02, sparkleStart);
+    sparkleOsc.frequency.exponentialRampToValueAtTime(3135.96, sparkleStart + 0.12);
 
     sparkleGain.gain.setValueAtTime(0.001, sparkleStart);
     sparkleGain.gain.linearRampToValueAtTime(0.18, sparkleStart + 0.01);
@@ -522,23 +486,18 @@ class SoundService {
     sparkleOsc.start(sparkleStart);
     sparkleOsc.stop(sparkleStart + 0.32);
 
-    // Light, gentle water ripple
     this.playWaterDrop();
   }
 
   /**
    * 3. Wish Release ("เสียงสายน้ำมงคลพร่างพราย สดใส")
    * เมื่อกดปล่อยกระทงลอยลงสู่สายน้ำตาปี
-   * เปลี่ยนจากเสียงฆ้องทึบๆ เป็นเสียงพิณสายน้ำและระฆังมงคลพร่างพราย สดใส ร่าเริง ชื่นบาน (Radiant Celestial Harp & Water Sparkle)
    */
   public playWishRelease() {
     this.initContext();
     if (!this.ctx || !this.sfxGainNode) return;
 
     const t = this.ctx.currentTime;
-
-    // Fast radiant glissando of bright celebratory tones
-    // C5, E5, G5, B5, C6, E6, G6, C7
     const glissNotes = [
       523.25, 659.25, 783.99, 987.77,
       1046.50, 1318.51, 1567.98, 2093.00,
@@ -563,8 +522,6 @@ class SoundService {
       osc.stop(noteTime + 0.5);
     });
 
-    // Sustained golden celestial chime chord at the climax
-    // C6 + E6 + G6 + C7 resonating softly like radiant sunlight on the river
     const chordTime = t + 0.28;
     const chordFreqs = [1046.50, 1318.51, 1567.98, 2093.00];
 
@@ -586,7 +543,6 @@ class SoundService {
       chordOsc.stop(chordTime + 1.7);
     });
 
-    // Gentle upward water ripple splash ("จ๋อม...ติ๋ง")
     const splashTime = t + 0.05;
     const splashOsc = this.ctx.createOscillator();
     const splashGain = this.ctx.createGain();
@@ -612,7 +568,6 @@ class SoundService {
     if (!this.ctx || !this.sfxGainNode) return;
 
     const t = this.ctx.currentTime;
-    // Ascending Thai celebratory motif
     const notes = [523.25, 659.25, 783.99, 1046.50, 1318.51, 1567.98];
 
     notes.forEach((freq, idx) => {
@@ -644,7 +599,6 @@ class SoundService {
 
     const t = this.ctx.currentTime;
 
-    // Quick camera shutter click
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
     osc.type = 'triangle';
@@ -659,7 +613,6 @@ class SoundService {
     osc.start(t);
     osc.stop(t + 0.08);
 
-    // Followed by magical star chime
     setTimeout(() => {
       if (this.ctx && this.sfxGainNode) {
         const t2 = this.ctx.currentTime;

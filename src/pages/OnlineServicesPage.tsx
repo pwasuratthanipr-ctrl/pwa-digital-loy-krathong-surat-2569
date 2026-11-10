@@ -18,6 +18,8 @@ import {
   Award,
 } from 'lucide-react';
 import { soundService } from '../services/soundService';
+import { StorageService } from '../services/storageService';
+import { APP_CONFIG } from '../config/appConfig';
 
 interface OnlineServicesPageProps {
   onNavigate: (path: string) => void;
@@ -35,6 +37,9 @@ export const OnlineServicesPage: React.FC<OnlineServicesPageProps> = ({
   const handleChooseOption = (type: 'REGISTER' | 'EXISTING') => {
     soundService.playWaterDrop();
     setActiveChoice(type);
+    if (type === 'EXISTING') {
+      StorageService.recordExistingUser();
+    }
     // Auto jump smoothly down to the selected section without user having to scroll
     setTimeout(() => {
       detailSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -270,17 +275,17 @@ export const OnlineServicesPage: React.FC<OnlineServicesPageProps> = ({
       {/* Anchor Ref for Auto-Scroll */}
       <div ref={detailSectionRef} className="scroll-mt-6" />
 
-      {/* VIEW 1: สมัครออนไลน์ (3 ช่องทางชัดเจน) */}
+      {/* VIEW 1: สมัครออนไลน์ (3 ช่องทางหลักทางการของการประปาส่วนภูมิภาค) */}
       {activeChoice === 'REGISTER' && (
         <div className="space-y-6 animate-in fade-in duration-200">
           
           <div className="text-center sm:text-left border-b border-cyan-900/60 pb-3">
             <h2 className="font-heading font-bold text-xl text-white flex items-center gap-2">
               <Smartphone className="w-5 h-5 text-cyan-400" />
-              <span>เลือกช่องทางบริการออนไลน์ กปภ. ที่สะดวก:</span>
+              <span>เลือกช่องทางบริการออนไลน์ที่ท่านสนใจใช้งาน:</span>
             </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              กดเลือกลิงก์ด้านล่างเพื่อดาวน์โหลดหรือเข้าใช้งานระบบทางการได้ทันที
+            <p className="text-xs text-slate-300 mt-0.5">
+              กดเลือกลิงก์ด้านล่างเพื่อดาวน์โหลดแอปทางการ, เพิ่มเพื่อน LINE หรือเข้าสู่ระบบชำระค่าน้ำออนไลน์
             </p>
           </div>
 
@@ -311,7 +316,11 @@ export const OnlineServicesPage: React.FC<OnlineServicesPageProps> = ({
                   href="https://play.google.com/store/apps/details?id=th.co.pwa.pwamobile&hl=th&gl=US"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="w-full py-2.5 px-3.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-xl text-xs font-semibold flex items-center justify-between shadow transition-all"
+                  onClick={() => {
+                    soundService.playWaterDrop();
+                    StorageService.recordOnlineServiceInterest('app');
+                  }}
+                  className="w-full py-2.5 px-3.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-xl text-xs font-semibold flex items-center justify-between shadow transition-all cursor-pointer"
                 >
                   <div className="flex items-center gap-2">
                     <Download className="w-4 h-4 text-emerald-200" />
@@ -324,7 +333,11 @@ export const OnlineServicesPage: React.FC<OnlineServicesPageProps> = ({
                   href="https://apps.apple.com/th/app/pwa-plus-life/id1479653708?l=th"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="w-full py-2.5 px-3.5 bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-500 hover:to-indigo-600 text-white rounded-xl text-xs font-semibold flex items-center justify-between shadow transition-all"
+                  onClick={() => {
+                    soundService.playWaterDrop();
+                    StorageService.recordOnlineServiceInterest('app');
+                  }}
+                  className="w-full py-2.5 px-3.5 bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-500 hover:to-indigo-600 text-white rounded-xl text-xs font-semibold flex items-center justify-between shadow transition-all cursor-pointer"
                 >
                   <div className="flex items-center gap-2">
                     <Download className="w-4 h-4 text-sky-200" />
@@ -359,7 +372,11 @@ export const OnlineServicesPage: React.FC<OnlineServicesPageProps> = ({
                   href="https://page.line.me/pwathailand"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="w-full py-2.5 px-3.5 bg-[#06C755] hover:bg-[#05b34c] text-white rounded-xl text-xs font-semibold flex items-center justify-between shadow transition-all"
+                  onClick={() => {
+                    soundService.playWaterDrop();
+                    StorageService.recordOnlineServiceInterest('line');
+                  }}
+                  className="w-full py-2.5 px-3.5 bg-[#06C755] hover:bg-[#05b34c] text-white rounded-xl text-xs font-semibold flex items-center justify-between shadow transition-all cursor-pointer"
                 >
                   <div className="flex items-center gap-2">
                     <MessageCircle className="w-4 h-4" />
@@ -394,7 +411,11 @@ export const OnlineServicesPage: React.FC<OnlineServicesPageProps> = ({
                   href="https://payment.pwa.co.th"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="w-full py-2.5 px-3.5 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-xl text-xs font-semibold flex items-center justify-between shadow transition-all"
+                  onClick={() => {
+                    soundService.playWaterDrop();
+                    StorageService.recordOnlineServiceInterest('web');
+                  }}
+                  className="w-full py-2.5 px-3.5 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-xl text-xs font-semibold flex items-center justify-between shadow transition-all cursor-pointer"
                 >
                   <div className="flex items-center gap-2">
                     <CreditCard className="w-4 h-4" />
