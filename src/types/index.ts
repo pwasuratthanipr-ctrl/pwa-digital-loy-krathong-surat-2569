@@ -42,27 +42,83 @@ export interface PublicStats {
   wasteReductionRate: number;
 }
 
-export interface AdminStats {
-  totalVisitors: number;
-  totalKrathongPlayers: number;
-  onlineServiceRegistrations: {
-    total: number;
+export interface KrathongActivity {
+  activity_id: string;
+  created_at: string;
+  krathong_type: string;
+  wish: string;
+  status: string;
+}
+
+export type AccountStatusType = 'no_account' | 'has_account';
+export type ServiceKeyType = 'pwa_plus_life' | 'line_official' | 'online_payment' | 'none';
+export type EventType = 'service_click' | 'complete_registration';
+
+export interface ServiceClickActivity {
+  event_id: string;
+  created_at: string;
+  account_status: AccountStatusType;
+  service_key: ServiceKeyType;
+  service_name: string;
+  event_type: EventType;
+}
+
+export interface OnlineServiceStats {
+  success: boolean;
+  totalEvents: number;
+  noAccountCount: number;
+  hasAccountCount: number;
+  clicksPwaPlusLife: number;
+  clicksLineOfficial: number;
+  clicksOnlinePayment: number;
+  totalServiceClicks: number;
+  completedRegistrationCount: number;
+  lastUpdated: string | null;
+  recentEvents: ServiceClickActivity[];
+  error?: string;
+  // Backward compatibility aliases
+  totalClicks?: number;
+  byService?: {
     app: number;
     line: number;
     web: number;
   };
-  existingUsersCount: number;
-  participantsLog: Array<{
-    code: string;
-    nickname: string;
-    krathongType: string;
-    wishText: string;
-    floatedAt: string;
-  }>;
-  serviceClicksLog: Array<{
-    channel: 'app' | 'line' | 'web';
-    channelName: string;
-    timestamp: string;
-  }>;
+  recentClicks?: ServiceClickActivity[];
 }
+
+export interface GoogleSheetsStats {
+  success: boolean;
+  totalFloated: number;
+  byType: {
+    pwa_blue: number;
+    eco_banana: number;
+    lotus_pink: number;
+    moonlight_gold: number;
+    tapi_river: number;
+    [key: string]: number;
+  };
+  countsByType?: {
+    pwa_blue: number;
+    eco_banana: number;
+    lotus_pink: number;
+    moonlight_gold: number;
+    tapi_river: number;
+    [key: string]: number;
+  };
+  lastUpdated: string | null;
+  recentKrathongs: KrathongActivity[];
+  error?: string;
+}
+
+export interface GoogleSheetsAdminData {
+  success: boolean;
+  totalFloated: number;
+  byType: Record<string, number>;
+  countsByType?: Record<string, number>;
+  lastUpdated: string | null;
+  allActivities: KrathongActivity[];
+  serviceStats?: OnlineServiceStats;
+  error?: string;
+}
+
 

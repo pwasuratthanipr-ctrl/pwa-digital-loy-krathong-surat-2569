@@ -318,7 +318,11 @@ export const OnlineServicesPage: React.FC<OnlineServicesPageProps> = ({
                   rel="noopener noreferrer"
                   onClick={() => {
                     soundService.playWaterDrop();
-                    StorageService.recordOnlineServiceInterest('app');
+                    StorageService.recordOnlineServiceInterest(
+                      'pwa_plus_life',
+                      'แอป PWA Plus Life (Android)',
+                      'no_account'
+                    );
                   }}
                   className="w-full py-2.5 px-3.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-xl text-xs font-semibold flex items-center justify-between shadow transition-all cursor-pointer"
                 >
@@ -335,7 +339,11 @@ export const OnlineServicesPage: React.FC<OnlineServicesPageProps> = ({
                   rel="noopener noreferrer"
                   onClick={() => {
                     soundService.playWaterDrop();
-                    StorageService.recordOnlineServiceInterest('app');
+                    StorageService.recordOnlineServiceInterest(
+                      'pwa_plus_life',
+                      'แอป PWA Plus Life (iOS)',
+                      'no_account'
+                    );
                   }}
                   className="w-full py-2.5 px-3.5 bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-500 hover:to-indigo-600 text-white rounded-xl text-xs font-semibold flex items-center justify-between shadow transition-all cursor-pointer"
                 >
@@ -374,7 +382,11 @@ export const OnlineServicesPage: React.FC<OnlineServicesPageProps> = ({
                   rel="noopener noreferrer"
                   onClick={() => {
                     soundService.playWaterDrop();
-                    StorageService.recordOnlineServiceInterest('line');
+                    StorageService.recordOnlineServiceInterest(
+                      'line_official',
+                      'LINE Official กปภ. (@pwathailand)',
+                      'no_account'
+                    );
                   }}
                   className="w-full py-2.5 px-3.5 bg-[#06C755] hover:bg-[#05b34c] text-white rounded-xl text-xs font-semibold flex items-center justify-between shadow transition-all cursor-pointer"
                 >
@@ -413,7 +425,11 @@ export const OnlineServicesPage: React.FC<OnlineServicesPageProps> = ({
                   rel="noopener noreferrer"
                   onClick={() => {
                     soundService.playWaterDrop();
-                    StorageService.recordOnlineServiceInterest('web');
+                    StorageService.recordOnlineServiceInterest(
+                      'online_payment',
+                      'ระบบชำระค่าน้ำออนไลน์ กปภ.',
+                      'no_account'
+                    );
                   }}
                   className="w-full py-2.5 px-3.5 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-xl text-xs font-semibold flex items-center justify-between shadow transition-all cursor-pointer"
                 >
@@ -439,13 +455,17 @@ export const OnlineServicesPage: React.FC<OnlineServicesPageProps> = ({
                 พร้อมสิ้นสุดกิจกรรมแล้วใช่หรือไม่?
               </h4>
               <p className="text-xs text-sky-200">
-                กดปุ่มเสร็จสิ้นกิจกรรม
+                กดปุ่มเสร็จสิ้นกิจกรรมเพื่อบันทึกสถิติและรับคำขอบคุณ
               </p>
             </div>
 
             <button
               onClick={() => {
                 soundService.playCelebration();
+                StorageService.recordRegistrationCompletion(
+                  'no_account',
+                  'เสร็จสิ้นกิจกรรม (ยังไม่มีบัญชี / สมัครออนไลน์)'
+                );
                 setShowThankYou(true);
                 window.scrollTo(0, 0);
               }}
@@ -507,6 +527,10 @@ export const OnlineServicesPage: React.FC<OnlineServicesPageProps> = ({
             <button
               onClick={() => {
                 soundService.playCelebration();
+                StorageService.recordRegistrationCompletion(
+                  'has_account',
+                  'เสร็จสิ้นกิจกรรม (มีบัญชีออนไลน์อยู่แล้ว)'
+                );
                 setShowThankYou(true);
                 window.scrollTo(0, 0);
               }}

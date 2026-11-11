@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { KrathongArt } from '../krathongs/KrathongArt';
 import { soundService } from '../../services/soundService';
+import { normalizeKrathongTypeId } from '../../services/googleSheetsService';
+import { Sparkles } from 'lucide-react';
 
 interface FloatingKrathongItem {
   id: string;
@@ -16,6 +18,7 @@ interface TapiRiverCanvasProps {
   floatingItems?: FloatingKrathongItem[];
   highlightCode?: string;
   className?: string;
+  onStartFloat?: () => void;
   activeItem?: {
     type: string;
     nickname?: string;
@@ -27,6 +30,7 @@ export const TapiRiverCanvas: React.FC<TapiRiverCanvasProps> = ({
   floatingItems = [],
   highlightCode,
   className = '',
+  onStartFloat,
   activeItem,
 }) => {
   const [selectedWish, setSelectedWish] = useState<FloatingKrathongItem | null>(null);
@@ -107,6 +111,7 @@ export const TapiRiverCanvas: React.FC<TapiRiverCanvasProps> = ({
           const posX = item.water_coordinates_x || (12 + (index * 19) % 76);
           const posY = item.water_coordinates_y || (48 + (index * 11) % 40);
           const scale = 0.55 + (posY / 100) * 0.45; // Depth perspective: lower is closer and larger
+          const normalizedType = normalizeKrathongTypeId(item.krathong_type);
 
           return (
             <div
@@ -124,7 +129,7 @@ export const TapiRiverCanvas: React.FC<TapiRiverCanvasProps> = ({
               title={`กระทงของ: ${item.nickname}`}
             >
               <div className="animate-river-drift" style={{ animationDelay: `${index * 0.6}s` }}>
-                <KrathongArt type={item.krathong_type} size={90} />
+                <KrathongArt type={normalizedType} size={90} />
                 
                 {/* Floating Nickname Tag */}
                 <div className="opacity-0 group-hover:opacity-100 transition-opacity absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap bg-slate-900/90 text-amber-300 text-xs px-2 py-0.5 rounded border border-amber-400/40 pointer-events-none shadow-lg">
@@ -135,11 +140,40 @@ export const TapiRiverCanvas: React.FC<TapiRiverCanvasProps> = ({
           );
         })}
 
+        {/* Empty State Overlay when no krathongs are floating yet */}
+        {floatingItems.length === 0 && !activeItem && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-20 px-4 text-center">
+            <div className="bg-slate-950/80 backdrop-blur-md px-6 py-5 rounded-2xl border border-cyan-500/40 max-w-sm sm:max-w-md shadow-2xl pointer-events-auto space-y-2 animate-in fade-in zoom-in-95 duration-200">
+              <div className="w-10 h-10 mx-auto rounded-full bg-cyan-500/20 text-amber-300 flex items-center justify-center border border-cyan-400/30">
+                <Sparkles className="w-5 h-5 animate-pulse" />
+              </div>
+              <h4 className="text-sm sm:text-base font-heading font-semibold text-amber-300">
+                ยังไม่มีกระทงในสายน้ำตาปี
+              </h4>
+              <p className="text-xs text-sky-200 leading-relaxed">
+                ร่วมเป็นคนแรกที่ปล่อยกระทงดิจิทัล ส่งความสุข ไม่เพิ่มขยะ คืนนี้
+              </p>
+              {onStartFloat && (
+                <button
+                  onClick={() => {
+                    soundService.playKrathongSelect();
+                    onStartFloat();
+                  }}
+                  className="mt-2 py-2 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-heading font-bold shadow-lg transition-all hover:scale-105 active:scale-95 cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>เริ่มลอยกระทงของคุณ</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* User Active/Preview Floating Krathong (if launched) */}
         {activeItem && (
           <div className="absolute left-1/2 bottom-12 -translate-x-1/2 z-20 flex flex-col items-center">
             <div className="animate-float-gentle">
-              <KrathongArt type={activeItem.type} size={160} />
+              <KrathongArt type={normalizeKrathongTypeId(activeItem.type)} size={160} />
             </div>
             {activeItem.nickname && (
               <span className="mt-2 text-xs font-medium text-amber-200 bg-slate-950/80 px-3 py-1 rounded-full border border-amber-400/30">
@@ -167,7 +201,7 @@ export const TapiRiverCanvas: React.FC<TapiRiverCanvasProps> = ({
             className="bg-slate-900/95 border border-amber-400/50 rounded-2xl p-6 max-w-sm w-full text-center shadow-2xl animate-in fade-in zoom-in-95 duration-200"
           >
             <div className="w-16 h-16 mx-auto -mt-2 mb-2 flex items-center justify-center">
-              <KrathongArt type={selectedWish.krathong_type} size={70} />
+              <KrathongArt type={normalizeKrathongTypeId(selectedWish.krathong_type)} size={70} />
             </div>
             <h4 className="text-amber-300 font-heading font-semibold text-lg">
               คำอธิษฐานของ {selectedWish.nickname}
