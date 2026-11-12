@@ -8,20 +8,22 @@
 
 export const APP_CONFIG = {
   // -------------------------------------------------------------
-  // 1. Google Sheets & Google Apps Script Database Integration
+  // 1. Google Sheets & Google Apps Script Database Integration (ค่ากลางทุกอุปกรณ์)
   // -------------------------------------------------------------
-  // URL ของ Google Apps Script Web App (ที่ลงท้ายด้วย /exec)
-  // ให้ผู้ดูแลระบบนำ URL จริงที่ Deploy แล้วมาวางตรงนี้:
-  // ตัวอย่าง: 'https://script.google.com/macros/s/AKfycb.../exec'
-  GOOGLE_SCRIPT_API_URL: '',
+  // URL กลางของ Google Apps Script Web App (ลงท้ายด้วย /exec)
+  // ทุกอุปกรณ์ (โทรศัพท์มือถือ, คอมพิวเตอร์, แท็บเล็ต) จะใช้ค่ากลางนี้ร่วมกันทันทีโดยประชาชนไม่ต้องตั้งค่าใดๆ
+  // รองรับทั้งการระบุผ่าน Environment Variable (VITE_GOOGLE_SCRIPT_API_URL) หรือวาง URL จริงที่นี่โดยตรง:
+  GOOGLE_SCRIPT_API_URL: (
+    (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GOOGLE_SCRIPT_API_URL) ||
+    ''
+  ).trim(),
 
 
   // -------------------------------------------------------------
   // 2. การตั้งค่าระบบผู้ดูแลระบบ (Admin Dashboard Settings)
   // -------------------------------------------------------------
   ADMIN_SETTINGS: {
-    DEFAULT_PIN: '1662', // รหัสผ่านผู้ดูแลระบบ (สายด่วน กปภ. 1662)
-    HOTLINE: '1662',
+    SESSION_TIMEOUT_MINUTES: 120, // เซสชันเจ้าหน้าที่หมดอายุอัตโนมัติใน 2 ชั่วโมง
   },
 
   // -------------------------------------------------------------

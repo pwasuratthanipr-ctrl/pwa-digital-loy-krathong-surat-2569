@@ -54,27 +54,163 @@ export function normalizeKrathongTypeId(rawType: any): KrathongTypeId {
 
 const STORAGE_API_KEY = 'pwa_google_script_api_url';
 const LOCAL_SESSION_CACHE_KEY = 'pwa_local_floated_cache';
+const SESSION_TOKEN_KEY = 'pwa_admin_session_token';
+const SESSION_EXPIRES_KEY = 'pwa_admin_session_expires';
 
 class GoogleSheetsService {
   private inFlightRequest: boolean = false;
   private lastClickTimestamps: Record<string, number> = {};
 
   /**
+   * ตรวจสอบและดึง Session Token ของเจ้าหน้าที่
+   * ใช้ sessionStorage เฉพาะ Tab เบราว์เซอร์ปัจจุบัน และตรวจสอบเวลาหมดอายุอย่างเข้มงวด
+   */
+  public getAdminAuthToken(): string | null {
+    try {
+      const token = sessionStorage.getItem(SESSION_TOKEN_KEY);
+      const expiresStr = sessionStorage.getItem(SESSION_EXPIRES_KEY);
+      if (!token || !expiresStr) {
+        return null;
+      }
+      const expiresAt = parseInt(expiresStr, 10);
+      if (isNaN(expiresAt) || Date.now() > expiresAt) {
+        // เซสชันหมดอายุแล้ว ล้างออกจากหน่วยความจำทันที
+        sessionStorage.removeItem(SESSION_TOKEN_KEY);
+        sessionStorage.removeItem(SESSION_EXPIRES_KEY);
+        return null;
+      }
+      return token;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * ตรวจสอบว่าเจ้าหน้าที่เข้าสู่ระบบอยู่หรือไม่
+   */
+  public isAuthenticated(): boolean {
+    return !!this.getAdminAuthToken();
+  }
+
+  /**
+   * ยืนยันตัวตนเจ้าหน้าที่ผ่าน Server-side Authentication
+   * ส่งรหัสผ่านทาง HTTPS POST Body (ไม่ส่งใน Query String หรือ URL)
+   */
+  public async loginAdmin(pin: string): Promise<{ success: boolean; error?: string }> {
+    const cleanPin = (pin || '').trim();
+    if (!cleanPin) {
+      return { success: false, error: 'กรุณากรอกรหัสผ่านเจ้าหน้าที่' };
+    }
+
+    const apiUrl = this.getApiUrl();
+    if (!apiUrl) {
+      return {
+        success: false,
+        error: 'ยังไม่ได้ระบุ Google Apps Script Web App URL กรุณาตั้งค่า URL ก่อนเข้าสู่ระบบ',
+      };
+    }
+
+    try {
+      const json = await this.requestApi('', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'adminLogin',
+          pin: cleanPin,
+        }),
+      });
+
+      if (json && json.success && json.authToken) {
+        // บันทึก Session Token และเวลาหมดอายุลงใน sessionStorage (ไม่ใช้ localStorage เพื่อป้องกันการค้างถาวร)
+        const expiresAt = json.expiresAt || (Date.now() + 2 * 60 * 60 * 1000);
+        sessionStorage.setItem(SESSION_TOKEN_KEY, json.authToken);
+        sessionStorage.setItem(SESSION_EXPIRES_KEY, expiresAt.toString());
+        return { success: true };
+      } else {
+        return {
+          success: false,
+          error: json?.error || 'รหัสผ่านเจ้าหน้าที่ไม่ถูกต้อง กรุณาตรวจสอบและลองใหม่อีกครั้ง',
+        };
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        error: 'ไม่สามารถติดต่อเซิร์ฟเวอร์เพื่อตรวจสอบสิทธิ์ได้: ' + (err.message || ''),
+      };
+    }
+  }
+
+  /**
+   * ออกจากระบบเจ้าหน้าที่และทำลาย Session Token ทั้งฝั่ง Client และ Server
+   */
+  public async logoutAdmin(): Promise<void> {
+    const currentToken = this.getAdminAuthToken();
+    try {
+      sessionStorage.removeItem(SESSION_TOKEN_KEY);
+      sessionStorage.removeItem(SESSION_EXPIRES_KEY);
+    } catch {}
+
+    const apiUrl = this.getApiUrl();
+    if (apiUrl && currentToken) {
+      fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'adminLogout',
+          authToken: currentToken,
+        }),
+      }).catch(() => {});
+    }
+  }
+
+  /**
    * ดึง URL ของ Google Apps Script API
-   * ตรวจสอบจากค่าที่ผู้ดูแลระบบกำหนดใน LocalStorage ก่อน แล้วจึงใช้จาก appConfig
+   * ลำดับความสำคัญ (Resolution Precedence):
+   * 1. ค่ากลางของระบบ (Centralized Config / Environment Variable)
+   *    เพื่อให้โทรศัพท์มือถือ, แท็บเล็ต, คอมพิวเตอร์ และทุกอุปกรณ์ใช้งานร่วมกันทันทีโดยประชาชนไม่ต้องตั้งค่าใดๆ
+   * 2. หากยังไม่ได้ระบุในค่ากลาง จึงใช้ค่าจาก LocalStorage ที่ผู้ดูแลระบบอาจตั้งค่าทดสอบไว้เฉพาะเครื่อง
    */
   public getApiUrl(): string {
+    const centralUrl = (APP_CONFIG.GOOGLE_SCRIPT_API_URL || '').trim();
+    if (centralUrl) {
+      return centralUrl;
+    }
     try {
       const customUrl = localStorage.getItem(STORAGE_API_KEY);
       if (customUrl && customUrl.trim()) {
         return customUrl.trim();
       }
     } catch {}
+    return '';
+  }
+
+  /**
+   * ตรวจสอบว่าระบบกำลังใช้งาน URL กลางส่วนกลางหรือไม่
+   */
+  public isUsingCentralUrl(): boolean {
+    return !!(APP_CONFIG.GOOGLE_SCRIPT_API_URL && APP_CONFIG.GOOGLE_SCRIPT_API_URL.trim());
+  }
+
+  /**
+   * ดึง URL กลางของระบบจาก appConfig / Environment Variable
+   */
+  public getCentralApiUrl(): string {
     return (APP_CONFIG.GOOGLE_SCRIPT_API_URL || '').trim();
   }
 
   /**
-   * บันทึก URL ใหม่ (สำหรับหน้าผู้ดูแลระบบ)
+   * ตรวจสอบแหล่งที่มาของ URL ที่กำลังใช้งาน
+   */
+  public getEffectiveApiSource(): 'central' | 'local' | 'none' {
+    if (this.isUsingCentralUrl()) return 'central';
+    try {
+      const customUrl = localStorage.getItem(STORAGE_API_KEY);
+      if (customUrl && customUrl.trim()) return 'local';
+    } catch {}
+    return 'none';
+  }
+
+  /**
+   * บันทึก URL ใหม่ (สำหรับทดสอบในเครื่อง)
    */
   public setApiUrl(url: string): void {
     try {
@@ -83,12 +219,23 @@ class GoogleSheetsService {
   }
 
   /**
-   * ล้าง URL ที่กำหนดเอง กลับไปใช้ค่าจาก appConfig
+   * ล้าง URL ที่กำหนดเองในเครื่อง กลับไปใช้ค่ากลาง
    */
   public clearCustomApiUrl(): void {
     try {
       localStorage.removeItem(STORAGE_API_KEY);
     } catch {}
+  }
+
+  /**
+   * ดึงค่า URL ที่อาจเคยบันทึกไว้ใน localStorage ของเครื่องนี้ (สำหรับแสดงให้เจ้าหน้าที่เห็นในหน้า Admin)
+   */
+  public getLocalStoredUrl(): string {
+    try {
+      return (localStorage.getItem(STORAGE_API_KEY) || '').trim();
+    } catch {
+      return '';
+    }
   }
 
   /**
@@ -99,6 +246,83 @@ class GoogleSheetsService {
     const timeSegment = Date.now().toString(36).toUpperCase();
     const randomSegment = Math.random().toString(36).substring(2, 6).toUpperCase();
     return `LK69-${timeSegment}-${randomSegment}`;
+  }
+
+  /**
+   * ดำเนินการส่งคำขอ API อย่างปลอดภัยและเสถียร
+   * 1. เรียกผ่าน Same-Origin Cloudflare Pages Function Proxy (/api/sheets) เป็นหลัก เพื่อขจัดปัญหา CORS และ 302 Redirect บน Chrome Android 100%
+   * 2. หาก Proxy ไม่พร้อมใช้งาน จึง Fallback ไปยัง Direct Google Apps Script URL พร้อม redirect: 'follow'
+   */
+  public async requestApi(
+    queryOrPath: string,
+    options: {
+      method: 'GET' | 'POST';
+      body?: string;
+      customUrl?: string;
+      timeoutMs?: number;
+    }
+  ): Promise<any> {
+    const directUrl = (options.customUrl || this.getApiUrl()).trim();
+    const cleanQuery = queryOrPath.replace(/^\?/, '');
+    const authToken = this.getAdminAuthToken();
+
+    // ลำดับที่ 1: เรียกผ่าน Same-Origin Proxy (/api/sheets)
+    try {
+      const proxyUrl = cleanQuery ? `/api/sheets?${cleanQuery}` : '/api/sheets';
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+      };
+      if (directUrl) {
+        headers['x-api-url'] = directUrl;
+      }
+      if (authToken) {
+        headers['x-auth-token'] = authToken;
+      }
+      if (options.method === 'POST') {
+        headers['Content-Type'] = 'text/plain;charset=utf-8';
+      }
+
+      const proxyRes = await fetch(proxyUrl, {
+        method: options.method,
+        headers,
+        body: options.body,
+      });
+
+      if (proxyRes.ok) {
+        const text = await proxyRes.text();
+        const json = JSON.parse(text);
+        if (json && typeof json === 'object') {
+          return json;
+        }
+      }
+    } catch (proxyErr) {
+      // หาก Proxy ยังไม่ได้เริ่มทำงานหรืออยู่นอกสภาพแวดล้อม Pages ให้สลับไปยัง Direct URL
+    }
+
+    // ลำดับที่ 2: Direct URL Fallback
+    if (!directUrl) {
+      throw new Error('ยังไม่ได้ระบุ Google Apps Script Web App URL ในระบบ');
+    }
+
+    let directFullUrl = directUrl;
+    if (options.method === 'GET' && cleanQuery) {
+      const glue = directUrl.includes('?') ? '&' : '?';
+      directFullUrl = `${directUrl}${glue}${cleanQuery}`;
+    }
+
+    const response = await fetch(directFullUrl, {
+      method: options.method,
+      headers: options.method === 'POST' ? { 'Content-Type': 'text/plain;charset=utf-8' } : undefined,
+      body: options.body,
+      redirect: 'follow',
+    });
+
+    if (!response.ok) {
+      throw new Error(`การเชื่อมต่อไปยัง Google Sheets ขัดข้อง (HTTP ${response.status})`);
+    }
+
+    const resText = await response.text();
+    return JSON.parse(resText);
   }
 
   /**
@@ -155,10 +379,13 @@ class GoogleSheetsService {
     }
 
     // 2. กรองเฉพาะสถานะ status = 'success' หรือ 'SUCCESS' ตามข้อกำหนดอย่างเคร่งครัด
-    const successActivities = parsedList.filter((act) => {
+    let successActivities = parsedList.filter((act) => {
       const s = (act.status || '').toLowerCase().trim();
-      return s === 'success' || s === 'completed' || s === 'ok' || s === '';
+      return s === 'success' || s === 'completed' || s === 'ok' || s === '' || s === 'true';
     });
+    if (successActivities.length === 0 && parsedList.length > 0) {
+      successActivities = parsedList;
+    }
 
     // 3. กำหนดค่าสถิติกระทง 5 ประเภท (5 สไตล์)
     const byType: Record<string, number> = {
@@ -169,34 +396,35 @@ class GoogleSheetsService {
       tapi_river: 0,
     };
 
-    if (successActivities.length > 0) {
-      // คำนวณจากรายการกิจกรรมจริงที่ status = success โดยตรง
+    const rawByType =
+      json.countsByType ||
+      json.byType ||
+      json.counts_by_type ||
+      json.data?.countsByType ||
+      json.data?.byType;
+
+    let hasServerByType = false;
+    if (rawByType && typeof rawByType === 'object') {
+      Object.keys(byType).forEach((k) => {
+        const val = rawByType[k] ?? rawByType[k.replace('_', '-')] ?? 0;
+        const num = Number(val) || 0;
+        byType[k] = num;
+        if (num > 0) hasServerByType = true;
+      });
+    }
+
+    // หาก server ไม่ได้ส่ง countsByType หรือเป็น 0 ให้คำนวณจากกิจกรรมจริง
+    if (!hasServerByType && successActivities.length > 0) {
       successActivities.forEach((act) => {
         const norm = normalizeKrathongTypeId(act.krathong_type);
         act.krathong_type = norm;
         byType[norm] = (byType[norm] || 0) + 1;
       });
-    } else {
-      const rawByType =
-        json.countsByType ||
-        json.byType ||
-        json.counts_by_type ||
-        json.data?.countsByType ||
-        json.data?.byType;
-
-      if (rawByType && typeof rawByType === 'object') {
-        Object.keys(byType).forEach((k) => {
-          const val = rawByType[k] ?? rawByType[k.replace('_', '-')] ?? 0;
-          byType[k] = Number(val) || 0;
-        });
-      }
     }
 
-    // 4. คำนวณยอดรวม total: สอดคล้องกับกิจกรรมจริง และเท่ากับผลรวมทั้ง 5 ประเภท
+    // 4. คำนวณยอดรวม total: สอดคล้องกับยอดที่ Apps Script ส่งมา
     let total = 0;
-    if (successActivities.length > 0) {
-      total = successActivities.length;
-    } else if (json.total !== undefined && json.total !== null) {
+    if (json.total !== undefined && json.total !== null) {
       total = Number(json.total) || 0;
     } else if (json.totalFloated !== undefined && json.totalFloated !== null) {
       total = Number(json.totalFloated) || 0;
@@ -204,6 +432,8 @@ class GoogleSheetsService {
       total = Number(json.count) || 0;
     } else if (json.data?.total !== undefined && json.data?.total !== null) {
       total = Number(json.data.total) || 0;
+    } else if (successActivities.length > 0) {
+      total = successActivities.length;
     }
 
     // 5. สถิติการคลิกและบริการออนไลน์ กปภ. (Sheet: ServiceClicks) - ครบ 6 มิติข้อมูล
@@ -330,44 +560,16 @@ class GoogleSheetsService {
    * หากเชื่อมต่อไม่ได้ คืนค่า success: false พร้อม error "ไม่สามารถโหลดข้อมูลสถิติได้"
    */
   public async getStats(): Promise<GoogleSheetsStats> {
-    const apiUrl = this.getApiUrl();
-
-    // หากยังไม่ได้กำหนด URL ในระบบ
-    if (!apiUrl) {
-      return {
-        success: false,
-        totalFloated: 0,
-        byType: {
-          pwa_blue: 0,
-          eco_banana: 0,
-          lotus_pink: 0,
-          moonlight_gold: 0,
-          tapi_river: 0,
-        },
-        lastUpdated: null,
-        recentKrathongs: [],
-        error: 'ยังไม่ได้ระบุ URL ของ Google Apps Script API',
-      };
-    }
-
+    const ts = Date.now();
     try {
-      let response: Response;
-      const ts = Date.now();
+      let json: any;
       try {
-        const urlWithAction = `${apiUrl}${apiUrl.includes('?') ? '&' : '?'}action=getStats&_t=${ts}`;
-        response = await fetch(urlWithAction, { method: 'GET', headers: { 'Accept': 'application/json' } });
-        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
+        json = await this.requestApi(`action=getStats&_t=${ts}`, { method: 'GET' });
       } catch (firstErr) {
         // Fallback: ดึงแบบไม่ใส่ action (เหมือนเปิด /exec โดยตรง)
-        const urlDirect = `${apiUrl}${apiUrl.includes('?') ? '&' : '?'}t=${ts}`;
-        response = await fetch(urlDirect, { method: 'GET', headers: { 'Accept': 'application/json' } });
+        json = await this.requestApi(`t=${ts}`, { method: 'GET' });
       }
 
-      if (!response.ok) {
-        throw new Error(`HTTP Error ${response.status}`);
-      }
-
-      const json = await response.json();
       const parsed = this.parseApiResponse(json);
 
       return {
@@ -381,7 +583,7 @@ class GoogleSheetsService {
           tapi_river: parsed.byType.tapi_river || 0,
         },
         lastUpdated: parsed.lastUpdated,
-        recentKrathongs: parsed.activities.slice(0, 25),
+        recentKrathongs: parsed.activities.slice(0, 30),
       };
     } catch (err: any) {
       console.warn('Google Sheets API getStats failed:', err);
@@ -397,7 +599,7 @@ class GoogleSheetsService {
         },
         lastUpdated: null,
         recentKrathongs: [],
-        error: 'ไม่สามารถโหลดข้อมูลสถิติได้',
+        error: 'ไม่สามารถโหลดข้อมูลสถิติได้: ' + (err.message || 'การเชื่อมต่อขัดข้อง'),
       };
     }
   }
@@ -450,22 +652,13 @@ class GoogleSheetsService {
     this.inFlightRequest = true;
 
     try {
-      // ส่งแบบ POST ด้วย text/plain JSON เพื่อรองรับ CORS บน Google Apps Script Web App
-      const response = await fetch(apiUrl, {
+      const resJson = await this.requestApi('', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8',
-        },
         body: JSON.stringify(activityData),
       });
 
-      if (!response.ok) {
-        throw new Error(`การเชื่อมต่อไปยัง Google Sheets ขัดข้อง (รหัสสถานะ: ${response.status})`);
-      }
-
-      const resJson = await response.json();
-      if (!resJson.success) {
-        throw new Error(resJson.error || 'Google Apps Script ไม่สามารถบันทึกข้อมูลได้');
+      if (!resJson || resJson.success === false) {
+        throw new Error(resJson?.error || 'Google Apps Script ไม่สามารถบันทึกข้อมูลได้');
       }
 
       // บันทึกลงใน Session Cache เพื่อแสดงใน Canvas ชั่วคราว
@@ -500,6 +693,35 @@ class GoogleSheetsService {
    * ดึงข้อมูลกิจกรรมทั้งหมดสำหรับหน้าผู้ดูแลระบบ (Admin)
    */
   public async getAdminActivities(): Promise<GoogleSheetsAdminData> {
+    if (!this.isAuthenticated()) {
+      return {
+        success: false,
+        totalFloated: 0,
+        byType: {},
+        countsByType: {},
+        lastUpdated: null,
+        allActivities: [],
+        serviceStats: {
+          success: false,
+          totalEvents: 0,
+          noAccountCount: 0,
+          hasAccountCount: 0,
+          clicksPwaPlusLife: 0,
+          clicksLineOfficial: 0,
+          clicksOnlinePayment: 0,
+          totalServiceClicks: 0,
+          completedRegistrationCount: 0,
+          lastUpdated: null,
+          recentEvents: [],
+          totalClicks: 0,
+          byService: { app: 0, line: 0, web: 0 },
+          recentClicks: [],
+          error: 'Unauthorized: จำเป็นต้องเข้าสู่ระบบเจ้าหน้าที่ก่อนเข้าถึงข้อมูลภายใน',
+        },
+        error: 'Unauthorized: จำเป็นต้องเข้าสู่ระบบเจ้าหน้าที่ก่อนเข้าถึงข้อมูลภายใน',
+      };
+    }
+
     const apiUrl = this.getApiUrl();
     if (!apiUrl) {
       return {
@@ -513,29 +735,20 @@ class GoogleSheetsService {
     }
 
     try {
-      let response: Response;
+      const token = this.getAdminAuthToken();
       const ts = Date.now();
-      try {
-        const urlWithAction = `${apiUrl}${apiUrl.includes('?') ? '&' : '?'}action=getAdminData&_t=${ts}`;
-        response = await fetch(urlWithAction, {
-          method: 'GET',
-          headers: { 'Accept': 'application/json' },
-        });
-        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
-      } catch (firstErr) {
-        // Fallback: ดึงแบบไม่ใส่ action (เหมือนเปิด /exec โดยตรง)
-        const urlDirect = `${apiUrl}${apiUrl.includes('?') ? '&' : '?'}t=${ts}`;
-        response = await fetch(urlDirect, {
-          method: 'GET',
-          headers: { 'Accept': 'application/json' },
-        });
+      const query = `action=getAdminData&authToken=${encodeURIComponent(token || '')}&_t=${ts}`;
+      const json = await this.requestApi(query, {
+        method: 'GET',
+      });
+
+      if (json && json.authenticated === false) {
+        // เซสชันถูกปฏิเสธจาก Server ล้างเซสชันทันที
+        sessionStorage.removeItem(SESSION_TOKEN_KEY);
+        sessionStorage.removeItem(SESSION_EXPIRES_KEY);
+        throw new Error('เซสชันเจ้าหน้าที่หมดอายุหรือไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่');
       }
 
-      if (!response.ok) {
-        throw new Error(`HTTP Error ${response.status}`);
-      }
-
-      const json = await response.json();
       const parsed = this.parseApiResponse(json);
 
       return {
@@ -587,28 +800,20 @@ class GoogleSheetsService {
     }
 
     try {
-      let response: Response;
       const ts = Date.now();
+      let json: any;
       try {
-        const testUrl = `${urlToTest}${urlToTest.includes('?') ? '&' : '?'}action=getStats&_t=${ts}`;
-        response = await fetch(testUrl, {
+        json = await this.requestApi(`action=getStats&_t=${ts}`, {
           method: 'GET',
-          headers: { 'Accept': 'application/json' },
+          customUrl: urlToTest,
         });
-        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
       } catch (e) {
-        const testUrlDirect = `${urlToTest}${urlToTest.includes('?') ? '&' : '?'}t=${ts}`;
-        response = await fetch(testUrlDirect, {
+        json = await this.requestApi(`t=${ts}`, {
           method: 'GET',
-          headers: { 'Accept': 'application/json' },
+          customUrl: urlToTest,
         });
       }
 
-      if (!response.ok) {
-        return { success: false, message: `เซิร์ฟเวอร์ตอบกลับรหัสข้อผิดพลาด HTTP ${response.status}` };
-      }
-
-      const json = await response.json();
       const parsed = this.parseApiResponse(json);
 
       return {
@@ -628,6 +833,10 @@ class GoogleSheetsService {
    * ส่งออกข้อมูลจาก Google Sheets เป็นไฟล์ Excel (CSV พร้อม UTF-8 BOM)
    */
   public exportActivitiesToCSV(activities: KrathongActivity[]): void {
+    if (!this.isAuthenticated()) {
+      alert('ไม่ได้รับอนุญาต: จำเป็นต้องเข้าสู่ระบบเจ้าหน้าที่ก่อนส่งออกข้อมูล');
+      return;
+    }
     if (!activities || activities.length === 0) {
       alert('ไม่มีข้อมูลกิจกรรมสำหรับส่งออก');
       return;
@@ -695,15 +904,14 @@ class GoogleSheetsService {
     };
 
     try {
-      fetch(apiUrl, {
+      const resJson = await this.requestApi('', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8',
-        },
         body: JSON.stringify(requestData),
-      }).catch((err) => {
-        console.warn('Background service event log warning:', err);
       });
+
+      if (!resJson || resJson.success === false) {
+        throw new Error(resJson?.error || 'เซิร์ฟเวอร์ไม่สามารถบันทึกเหตุการณ์บริการได้');
+      }
 
       return { success: true, event_id: eventId };
     } catch (err: any) {
@@ -757,6 +965,26 @@ class GoogleSheetsService {
    * ดึงข้อมูลสถิติการคลิกเลือกบริการออนไลน์ กปภ. จาก Google Sheets
    */
   public async getServiceStats(): Promise<OnlineServiceStats> {
+    if (!this.isAuthenticated()) {
+      return {
+        success: false,
+        totalEvents: 0,
+        noAccountCount: 0,
+        hasAccountCount: 0,
+        clicksPwaPlusLife: 0,
+        clicksLineOfficial: 0,
+        clicksOnlinePayment: 0,
+        totalServiceClicks: 0,
+        completedRegistrationCount: 0,
+        lastUpdated: null,
+        recentEvents: [],
+        totalClicks: 0,
+        byService: { app: 0, line: 0, web: 0 },
+        recentClicks: [],
+        error: 'Unauthorized: จำเป็นต้องเข้าสู่ระบบเจ้าหน้าที่ก่อนเข้าถึงข้อมูล',
+      };
+    }
+
     const apiUrl = this.getApiUrl();
     if (!apiUrl) {
       return {
@@ -779,30 +1007,20 @@ class GoogleSheetsService {
     }
 
     try {
-      let response: Response;
+      const token = this.getAdminAuthToken();
       const ts = Date.now();
-      try {
-        const urlWithAction = `${apiUrl}${apiUrl.includes('?') ? '&' : '?'}action=getServiceStats&_t=${ts}`;
-        response = await fetch(urlWithAction, {
-          method: 'GET',
-          headers: { 'Accept': 'application/json' },
-        });
-        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
-      } catch (e) {
-        const urlDirect = `${apiUrl}${apiUrl.includes('?') ? '&' : '?'}t=${ts}`;
-        response = await fetch(urlDirect, {
-          method: 'GET',
-          headers: { 'Accept': 'application/json' },
-        });
+      const query = `action=getServiceStats&authToken=${encodeURIComponent(token || '')}&_t=${ts}`;
+      const json = await this.requestApi(query, {
+        method: 'GET',
+      });
+
+      if (json && json.authenticated === false) {
+        sessionStorage.removeItem(SESSION_TOKEN_KEY);
+        sessionStorage.removeItem(SESSION_EXPIRES_KEY);
+        throw new Error('เซสชันเจ้าหน้าที่หมดอายุหรือไม่ถูกต้อง');
       }
 
-      if (!response.ok) {
-        throw new Error(`HTTP Error ${response.status}`);
-      }
-
-      const json = await response.json();
       const parsed = this.parseApiResponse(json);
-
       return parsed.serviceStats;
     } catch (err: any) {
       return {
@@ -830,6 +1048,10 @@ class GoogleSheetsService {
    * รองรับ 6 คอลัมน์: event_id, created_at, account_status, service_key, service_name, event_type
    */
   public exportServiceClicksToCSV(events: ServiceClickActivity[]): void {
+    if (!this.isAuthenticated()) {
+      alert('ไม่ได้รับอนุญาต: จำเป็นต้องเข้าสู่ระบบเจ้าหน้าที่ก่อนส่งออกข้อมูล');
+      return;
+    }
     if (!events || events.length === 0) {
       alert('ไม่มีข้อมูลเหตุการณ์บริการออนไลน์สำหรับส่งออก');
       return;

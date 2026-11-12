@@ -151,7 +151,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
               <div className="flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
                 <span>
-                  <strong>สถานะฐานข้อมูล:</strong> ไม่สามารถโหลดข้อมูลสถิติได้ (กรุณาตรวจสอบการตั้งค่า Google Apps Script ในหน้าผู้ดูแลระบบ)
+                  <strong>สถานะการเชื่อมต่อ:</strong> {statsData.error || 'ไม่สามารถติดต่อ Google Apps Script API ได้'}
                 </span>
               </div>
               <button

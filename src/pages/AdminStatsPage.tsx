@@ -26,6 +26,10 @@ import {
   UserPlus,
   UserCheck,
   Award,
+  LogOut,
+  Globe,
+  Copy,
+  Trash2,
 } from 'lucide-react';
 import { googleSheetsService } from '../services/googleSheetsService';
 import { StorageService } from '../services/storageService';
@@ -39,9 +43,10 @@ interface AdminStatsPageProps {
 }
 
 export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => googleSheetsService.isAuthenticated());
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<string>('');
+  const [loggingIn, setLoggingIn] = useState<boolean>(false);
   
   // Real data state from Google Sheets
   const [adminData, setAdminData] = useState<GoogleSheetsAdminData | null>(null);
@@ -57,9 +62,21 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
   const [testingConnection, setTestingConnection] = useState<boolean>(false);
 
   const loadRealAdminData = async () => {
+    if (!googleSheetsService.isAuthenticated()) {
+      setIsAuthenticated(false);
+      setAdminData(null);
+      return;
+    }
+
     setLoading(true);
     try {
       const data = await StorageService.getAdminActivities();
+      if (!data.success && (data as any).authenticated === false) {
+        setIsAuthenticated(false);
+        setAdminData(null);
+        setPinError('เซสชันเจ้าหน้าที่หมดอายุ กรุณาเข้าสู่ระบบใหม่');
+        return;
+      }
       setAdminData(data);
     } catch (err: any) {
       setAdminData({
@@ -68,7 +85,7 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
         byType: {},
         lastUpdated: null,
         allActivities: [],
-        error: 'ไม่สามารถโหลดข้อมูลสถิติได้',
+        error: 'ไม่สามารถโหลดข้อมูลสถิติได้: ' + (err.message || ''),
       });
     } finally {
       setLoading(false);
@@ -76,46 +93,136 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
   };
 
   useEffect(() => {
-    // Check if previously unlocked in this session
-    const isUnlocked = sessionStorage.getItem('pwa_admin_unlocked') === 'true';
-    if (isUnlocked) {
+    if (googleSheetsService.isAuthenticated()) {
       setIsAuthenticated(true);
-      setApiUrlInput(googleSheetsService.getApiUrl());
-      loadRealAdminData();
-    }
-  }, []);
-
-  const handleUnlock = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (pinInput.trim() === APP_CONFIG.ADMIN_SETTINGS.DEFAULT_PIN) {
-      soundService.playCelebration();
-      setIsAuthenticated(true);
-      sessionStorage.setItem('pwa_admin_unlocked', 'true');
-      setPinError('');
       setApiUrlInput(googleSheetsService.getApiUrl());
       loadRealAdminData();
     } else {
+      setIsAuthenticated(false);
+      setAdminData(null);
+    }
+
+    // Periodic check for session expiry every 30 seconds
+    const interval = setInterval(() => {
+      if (!googleSheetsService.isAuthenticated() && isAuthenticated) {
+        setIsAuthenticated(false);
+        setAdminData(null);
+        setPinError('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+      }
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
+
+  const handleUnlock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanPin = pinInput.trim();
+    if (!cleanPin) {
+      setPinError('กรุณากรอกรหัสผ่านเจ้าหน้าที่');
+      return;
+    }
+
+    setLoggingIn(true);
+    setPinError('');
+
+    try {
+      const res = await googleSheetsService.loginAdmin(cleanPin);
+      if (res.success) {
+        soundService.playCelebration();
+        setIsAuthenticated(true);
+        setPinInput('');
+        setPinError('');
+        setApiUrlInput(googleSheetsService.getApiUrl());
+        loadRealAdminData();
+      } else {
+        soundService.playWaterDrop();
+        setPinError(res.error || 'รหัสผ่านเจ้าหน้าที่ไม่ถูกต้อง กรุณาตรวจสอบและลองใหม่อีกครั้ง');
+      }
+    } catch (err: any) {
+      setPinError('เกิดข้อผิดพลาดในการตรวจสอบสิทธิ์ กรุณาลองใหม่อีกครั้ง');
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    soundService.playWaterDrop();
+    await googleSheetsService.logoutAdmin();
+    setIsAuthenticated(false);
+    setAdminData(null);
+    setPinInput('');
+    setPinError('');
+  };
+
+  const [copiedUrl, setCopiedUrl] = useState<boolean>(false);
+
+  const handleTestUrl = async (customUrl?: string) => {
+    const urlToTest = (customUrl !== undefined ? customUrl : apiUrlInput).trim();
+    if (!urlToTest) {
+      setTestResult({ success: false, message: 'กรุณาระบุ URL ที่ต้องการทดสอบ' });
+      return;
+    }
+    setTestingConnection(true);
+    setTestResult(null);
+    try {
+      const res = await googleSheetsService.testConnection(urlToTest);
+      setTestResult(res);
+      if (res.success) {
+        soundService.playCelebration();
+      } else {
+        soundService.playWaterDrop();
+      }
+    } catch (err: any) {
+      setTestResult({ success: false, message: 'ไม่สามารถทดสอบการเชื่อมต่อได้: ' + err.message });
       soundService.playWaterDrop();
-      setPinError(`รหัสผ่านไม่ถูกต้อง (คำใบ้: สายด่วน กปภ. ${APP_CONFIG.ADMIN_SETTINGS.HOTLINE})`);
+    } finally {
+      setTestingConnection(false);
     }
   };
 
   const handleSaveApiUrl = async () => {
+    const cleanUrl = apiUrlInput.trim();
+    if (!cleanUrl) {
+      setTestResult({ success: false, message: 'กรุณาระบุ URL ก่อนบันทึก' });
+      return;
+    }
     setTestingConnection(true);
     setTestResult(null);
     try {
-      const res = await googleSheetsService.testConnection(apiUrlInput.trim());
+      const res = await googleSheetsService.testConnection(cleanUrl);
       setTestResult(res);
       if (res.success) {
-        googleSheetsService.setApiUrl(apiUrlInput.trim());
+        googleSheetsService.setApiUrl(cleanUrl);
         soundService.playCelebration();
         loadRealAdminData();
+      } else {
+        soundService.playWaterDrop();
       }
     } catch (err: any) {
       setTestResult({ success: false, message: 'ไม่สามารถทดสอบการเชื่อมต่อได้: ' + err.message });
+      soundService.playWaterDrop();
     } finally {
       setTestingConnection(false);
     }
+  };
+
+  const handleClearCustomUrl = () => {
+    googleSheetsService.clearCustomApiUrl();
+    const activeUrl = googleSheetsService.getApiUrl();
+    setApiUrlInput(activeUrl);
+    setTestResult({
+      success: true,
+      message: 'ล้างค่าเฉพาะเครื่องสำเร็จ กลับไปใช้การตั้งค่ากลางส่วนกลาง (Central URL)',
+    });
+    soundService.playWaterDrop();
+    loadRealAdminData();
+  };
+
+  const handleCopyText = (text: string) => {
+    if (!text) return;
+    navigator.clipboard?.writeText(text);
+    setCopiedUrl(true);
+    setTimeout(() => setCopiedUrl(false), 2000);
   };
 
   const handleExportCSV = () => {
@@ -170,14 +277,15 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
               </label>
               <input
                 type="password"
-                maxLength={6}
+                maxLength={10}
                 value={pinInput}
+                disabled={loggingIn}
                 onChange={(e) => {
                   setPinInput(e.target.value);
                   if (pinError) setPinError('');
                 }}
-                placeholder="กรอกรหัส 4 หลัก"
-                className="w-full text-center tracking-widest text-xl font-mono py-3 px-4 rounded-xl bg-slate-900 border border-cyan-500/40 text-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-400 placeholder:text-slate-600 placeholder:text-sm placeholder:tracking-normal"
+                placeholder="กรอกรหัสผ่านเจ้าหน้าที่"
+                className="w-full text-center tracking-widest text-xl font-mono py-3 px-4 rounded-xl bg-slate-900 border border-cyan-500/40 text-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-400 placeholder:text-slate-600 placeholder:text-sm placeholder:tracking-normal disabled:opacity-50"
                 autoFocus
               />
               {pinError && (
@@ -187,16 +295,27 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
 
             <button
               type="submit"
-              className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-heading font-bold text-sm shadow-xl shadow-amber-950/50 flex items-center justify-center gap-2 transition-all hover:scale-102 active:scale-98 cursor-pointer"
+              disabled={loggingIn}
+              className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-heading font-bold text-sm shadow-xl shadow-amber-950/50 flex items-center justify-center gap-2 transition-all hover:scale-102 active:scale-98 cursor-pointer disabled:opacity-60"
             >
-              <Unlock className="w-4 h-4" />
-              <span>เข้าสู่แดชบอร์ด</span>
+              {loggingIn ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
+                  <span>กำลังตรวจสอบสิทธิ์...</span>
+                </>
+              ) : (
+                <>
+                  <Unlock className="w-4 h-4" />
+                  <span>เข้าสู่ระบบเจ้าหน้าที่</span>
+                </>
+              )}
             </button>
           </form>
 
           <div className="pt-2 border-t border-cyan-900/60 text-center">
-            <p className="text-[11px] text-slate-400">
-              💡 เจ้าหน้าที่ กปภ. สามารถใช้รหัสสายด่วน <strong className="text-amber-300">{APP_CONFIG.ADMIN_SETTINGS.HOTLINE}</strong> ในการเข้าสู่ระบบ
+            <p className="text-[11px] text-slate-400 flex items-center justify-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>ระบบรักษาความปลอดภัยเปิดใช้งาน • สำหรับบุคลากรที่ได้รับอนุญาตเท่านั้น</span>
             </p>
           </div>
 
@@ -307,34 +426,150 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
             <ArrowLeft className="w-3.5 h-3.5" />
             <span>กลับหน้าแรก</span>
           </button>
+
+          <button
+            onClick={handleLogout}
+            className="px-3.5 py-2 rounded-xl bg-rose-950/80 hover:bg-rose-900 text-rose-200 border border-rose-500/40 text-xs font-semibold flex items-center gap-1.5 transition-all hover:scale-102 cursor-pointer shadow-sm"
+            title="ออกจากระบบผู้ดูแลระบบและทำลายเซสชัน"
+          >
+            <LogOut className="w-3.5 h-3.5 text-rose-400" />
+            <span>ออกจากระบบ</span>
+          </button>
         </div>
       </div>
 
       {/* Google Apps Script API Configuration Panel (Toggleable) */}
       {showConfigModal && (
-        <div className="bg-gradient-to-r from-slate-900 via-cyan-950 to-slate-900 p-6 rounded-3xl border-2 border-amber-400/40 shadow-2xl space-y-4 animate-in fade-in duration-200">
-          <div className="flex items-start justify-between">
+        <div className="bg-gradient-to-b from-slate-900 via-[#07253d] to-slate-900 p-6 sm:p-7 rounded-3xl border-2 border-cyan-400/50 shadow-2xl space-y-6 animate-in fade-in duration-200">
+          {/* Header */}
+          <div className="flex items-start justify-between border-b border-cyan-500/20 pb-4">
             <div className="space-y-1">
-              <h3 className="font-heading font-bold text-base text-white flex items-center gap-2">
-                <Database className="w-4 h-4 text-amber-300" />
-                <span>การตั้งค่า Google Apps Script Web App URL</span>
-              </h3>
-              <p className="text-xs text-slate-300">
-                นำ Web App URL ที่ได้จากการ Deploy Google Apps Script ใน Google Sheets มาใส่ที่นี่ เพื่อให้ระบบเชื่อมต่อไปยังฐานข้อมูลจริง
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-400/20 text-amber-300 flex items-center justify-center border border-amber-400/30">
+                  <Database className="w-4 h-4" />
+                </div>
+                <h3 className="font-heading font-bold text-lg text-white">
+                  ตั้งค่าและตรวจสอบ Google Apps Script Web App API
+                </h3>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                ระบบเชื่อมโยงฐานข้อมูลจริง Google Sheets สำหรับทั้งคอมพิวเตอร์และโทรศัพท์มือถือทุกเครื่อง
               </p>
             </div>
             <button
               onClick={() => setShowConfigModal(false)}
-              className="text-xs text-slate-400 hover:text-white p-1"
+              className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors"
             >
-              ✕
+              ✕ ปิด
             </button>
           </div>
 
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-slate-300 block">
-              Google Apps Script Web App URL:
-            </label>
+          {/* Section 1: Active Centralized URL Status */}
+          <div className="p-4 rounded-2xl bg-slate-950/80 border border-cyan-500/30 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-cyan-400" />
+                <span className="text-xs font-bold text-cyan-200">
+                  URL กลางของระบบ (Centralized API URL):
+                </span>
+              </div>
+              <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-medium inline-flex items-center gap-1.5 ${
+                googleSheetsService.isUsingCentralUrl()
+                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40'
+                  : 'bg-amber-950 text-amber-300 border border-amber-500/40'
+              }`}>
+                {googleSheetsService.isUsingCentralUrl() ? (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>กำหนดค่ากลางแล้ว (มือถือทุกเครื่องใช้งานได้ทันที)</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                    <span>ยังไม่ได้กำหนดค่ากลางในโค้ด</span>
+                  </>
+                )}
+              </span>
+            </div>
+
+            {googleSheetsService.isUsingCentralUrl() ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 bg-slate-900 px-3 py-2 rounded-xl border border-slate-800">
+                  <code className="text-xs font-mono text-cyan-300 break-all flex-1 select-all">
+                    {googleSheetsService.getCentralApiUrl()}
+                  </code>
+                  <button
+                    onClick={() => handleCopyText(googleSheetsService.getCentralApiUrl())}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors shrink-0"
+                    title="คัดลอก URL"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    onClick={() => handleTestUrl(googleSheetsService.getCentralApiUrl())}
+                    disabled={testingConnection}
+                    className="py-1.5 px-3 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {testingConnection ? (
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-3 h-3" />
+                    )}
+                    <span>ทดสอบการเชื่อมต่อ API กลาง</span>
+                  </button>
+                  <span className="text-[11px] text-slate-400">
+                    แหล่งที่มา: <strong className="text-cyan-300 font-normal">src/config/appConfig.ts หรือ .env</strong>
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-500/30 text-amber-200 text-xs space-y-2.5">
+                {googleSheetsService.getLocalStoredUrl() && (
+                  <div className="p-2.5 rounded-lg bg-slate-900/90 border border-amber-400/50 space-y-1.5">
+                    <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />
+                      <span>ตรวจพบ URL ที่ท่านเคยบันทึกไว้ในเบราว์เซอร์เครื่องนี้:</span>
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <code className="text-[11px] font-mono text-cyan-200 break-all flex-1 select-all bg-slate-950 p-1.5 rounded">
+                        {googleSheetsService.getLocalStoredUrl()}
+                      </code>
+                      <button
+                        onClick={() => handleCopyText(googleSheetsService.getLocalStoredUrl())}
+                        className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[10px] shrink-0 cursor-pointer"
+                        title="คัดลอก URL"
+                      >
+                        คัดลอก
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <p className="leading-relaxed">
+                  ⚠️ <strong>สาเหตุที่โทรศัพท์มือถือเครื่องใหม่เปิดไม่ติด:</strong> เนื่องจากเบราว์เซอร์ของโทรศัพท์มือถือแต่ละเครื่องมี <code className="bg-slate-900 px-1 py-0.5 rounded font-mono text-cyan-300">localStorage</code> แยกจากคอมพิวเตอร์อย่างสิ้นเชิง การบันทึกเฉพาะในหน้าเว็บนี้จะทำให้ใช้งานได้เฉพาะเครื่องนี้
+                </p>
+                <p className="leading-relaxed text-slate-300">
+                  💡 <strong>วิธีเปิดใช้งานสำหรับทุกเครื่อง (โทรศัพท์มือถือทุกเครื่อง):</strong> นำ Web App URL ไปใส่ในไฟล์ <code className="bg-slate-900 px-1.5 py-0.5 rounded text-amber-300 font-mono">src/config/appConfig.ts</code> ที่ <code className="bg-slate-900 px-1.5 py-0.5 rounded text-cyan-300 font-mono">GOOGLE_SCRIPT_API_URL</code> หรือระบุใน <code className="bg-slate-900 px-1.5 py-0.5 rounded text-amber-300 font-mono">.env</code> ที่ตัวแปร <code className="bg-slate-900 px-1.5 py-0.5 rounded text-cyan-300 font-mono">VITE_GOOGLE_SCRIPT_API_URL</code>
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Section 2: Test Any URL & Local Override */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                <Settings className="w-3.5 h-3.5 text-amber-400" />
+                <span>ทดสอบ URL หรือบันทึกใช้งานเฉพาะเครื่องนี้ (Local Override):</span>
+              </label>
+              {googleSheetsService.getEffectiveApiSource() === 'local' && (
+                <span className="text-[10px] font-medium text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-500/30">
+                  กำลังใช้ Local Override ใน localStorage
+                </span>
+              )}
+            </div>
+
             <div className="flex flex-col sm:flex-row gap-2">
               <input
                 type="url"
@@ -344,29 +579,45 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
                 className="flex-1 py-2.5 px-3.5 rounded-xl bg-slate-950 border border-cyan-500/40 text-xs font-mono text-cyan-200 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-400"
               />
               <button
-                onClick={handleSaveApiUrl}
+                onClick={() => handleTestUrl(apiUrlInput)}
                 disabled={testingConnection}
-                className="py-2.5 px-5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-heading font-bold rounded-xl shadow transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                className="py-2.5 px-4 bg-cyan-700 hover:bg-cyan-600 text-white text-xs font-semibold rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
               >
                 {testingConnection ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>กำลังทดสอบ...</span>
-                  </>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <span>บันทึก & ทดสอบ</span>
+                  <CheckCircle2 className="w-3.5 h-3.5" />
                 )}
+                <span>ทดสอบ URL</span>
               </button>
+              <button
+                onClick={handleSaveApiUrl}
+                disabled={testingConnection}
+                className="py-2.5 px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-heading font-bold rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
+                title="บันทึกใน localStorage ของเครื่องนี้"
+              >
+                <span>บันทึกเฉพาะเครื่อง</span>
+              </button>
+              {googleSheetsService.getEffectiveApiSource() === 'local' && (
+                <button
+                  onClick={handleClearCustomUrl}
+                  className="py-2.5 px-3 bg-rose-950/80 hover:bg-rose-900 text-rose-200 border border-rose-500/40 text-xs font-semibold rounded-xl flex items-center justify-center gap-1 transition-all cursor-pointer shrink-0"
+                  title="ล้างค่าใน localStorage และกลับไปใช้ URL กลาง"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>ล้างค่า</span>
+                </button>
+              )}
             </div>
           </div>
 
           {/* Test connection feedback */}
           {testResult && (
             <div
-              className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+              className={`p-3.5 rounded-2xl text-xs flex items-center gap-2.5 ${
                 testResult.success
-                  ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-200'
-                  : 'bg-rose-950/60 border border-rose-500/40 text-rose-200'
+                  ? 'bg-emerald-950/70 border border-emerald-500/40 text-emerald-200'
+                  : 'bg-rose-950/70 border border-rose-500/40 text-rose-200'
               }`}
             >
               {testResult.success ? (
@@ -374,18 +625,22 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
               ) : (
                 <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
               )}
-              <span>{testResult.message}</span>
+              <span className="leading-relaxed">{testResult.message}</span>
             </div>
           )}
 
-          <div className="text-[11px] text-slate-400 pt-1 flex items-center justify-between">
-            <span>📖 ดูคำแนะนำและโค้ดตัวอย่างในไฟล์ <strong>google-apps-script/Code.gs</strong></span>
-            {googleSheetsService.getApiUrl() && (
-              <span className="text-emerald-400 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" />
-                <span>กำหนดค่าแล้ว</span>
-              </span>
-            )}
+          {copiedUrl && (
+            <div className="p-2 rounded-xl bg-cyan-950/80 border border-cyan-500/40 text-cyan-200 text-xs text-center animate-in fade-in">
+              ✓ คัดลอก URL เรียบร้อยแล้ว
+            </div>
+          )}
+
+          {/* Footer Guide */}
+          <div className="text-[11px] text-slate-400 pt-2 border-t border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span>📖 แนะนำ: ตั้งค่า Deploy ใน Google Sheets เป็น <strong>Execute as: Me</strong> และ <strong>Who has access: Anyone</strong></span>
+            <span className="text-cyan-300 font-mono">
+              สถานะ: {googleSheetsService.getEffectiveApiSource() === 'central' ? 'URL กลาง' : googleSheetsService.getEffectiveApiSource() === 'local' ? 'Local Override' : 'ยังไม่ได้ระบุ'}
+            </span>
           </div>
         </div>
       )}
@@ -500,7 +755,7 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
           </div>
           <div className="text-[11px] text-emerald-200/80 bg-emerald-950/60 px-2.5 py-1 rounded-lg border border-emerald-400/20 flex items-center gap-1">
             <CheckCircle2 className="w-3 h-3 text-emerald-300" />
-            <span>ผ่านการตรวจสอบสิทธิ์ด้วย PIN 1662</span>
+            <span>ระบบรักษาความปลอดภัยเปิดใช้งาน</span>
           </div>
         </div>
 

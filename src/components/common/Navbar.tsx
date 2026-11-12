@@ -285,21 +285,21 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPath, onNavigate }) => {
             />
           </div>
 
-          {/* Admin Stats Link on Mobile (No Google Forms) */}
+          {/* Admin Stats Link on Mobile */}
           <div className="pt-2">
             <button
               onClick={() => {
                 onNavigate('/admin');
                 setMobileMenuOpen(false);
               }}
-              className="w-full py-2.5 px-3 bg-gradient-to-r from-cyan-950 to-[#052949] border border-amber-400/40 text-amber-300 rounded-xl text-xs font-semibold flex items-center justify-between shadow"
+              className="w-full py-2.5 px-3 bg-gradient-to-r from-cyan-950 to-[#052949] border border-cyan-500/40 text-cyan-200 rounded-xl text-xs font-semibold flex items-center justify-between shadow hover:border-amber-400/50 transition-colors"
             >
               <div className="flex items-center gap-2">
                 <BarChart3 className="w-4 h-4 text-amber-300" />
-                <span>สถิติสำหรับผู้ดูแลระบบ (Admin Dashboard)</span>
+                <span>แดชบอร์ดสถิติเจ้าหน้าที่</span>
               </div>
-              <span className="text-[10px] bg-amber-400/20 px-1.5 py-0.5 rounded border border-amber-400/30">
-                รหัส 1662
+              <span className="text-[10px] bg-slate-900/80 text-sky-300 px-2 py-0.5 rounded border border-cyan-500/30">
+                เฉพาะเจ้าหน้าที่
               </span>
             </button>
           </div>
