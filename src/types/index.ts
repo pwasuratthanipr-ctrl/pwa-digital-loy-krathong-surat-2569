@@ -65,6 +65,7 @@ export interface ServiceClickActivity {
 
 export interface OnlineServiceStats {
   success: boolean;
+  authenticated?: boolean;
   totalEvents: number;
   noAccountCount: number;
   hasAccountCount: number;
@@ -112,6 +113,7 @@ export interface GoogleSheetsStats {
 
 export interface GoogleSheetsAdminData {
   success: boolean;
+  authenticated?: boolean;
   totalFloated: number;
   byType: Record<string, number>;
   countsByType?: Record<string, number>;

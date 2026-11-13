@@ -7,16 +7,19 @@
  * 
  * นโยบายความปลอดภัย (Security Policy):
  * 1. ตรวจสอบสิทธิ์ฝั่ง Server (Server-side Authentication):
- *    - ไม่ส่งรหัสผ่านหรือ Secret กลับไปยังผู้ใช้
+ *    - ไม่มีรหัสผ่านเริ่มต้นแบบ Hardcode ในโค้ด
+ *    - จัดเก็บรหัสผ่านในรูปแบบ Salted Stretched SHA-256 Hash ภายใน Script Properties เท่านั้น
+ *    - ไม่ส่งรหัสผ่าน, Hash, Salt หรือ Secret กลับไปยังผู้ใช้ และไม่บันทึกลงใน Log
  *    - แยก Public API (สำหรับประชาชนทั่วไป) ออกจาก Admin API (สำหรับเจ้าหน้าที่)
- *    - ข้อมูลส่วนตัว เหตุการณ์ ServiceClicks และประวัติกิจกรรมฉบับสมบูรณ์ จะเข้าถึงได้เฉพาะผู้มี Session Token ที่ถูกต้องเท่านั้น
- * 2. การจัดการ Session Token:
+ * 2. การจัดการ Session Token และป้องกัน Brute-force:
  *    - เมื่อยืนยันตัวตนสำเร็จ ระบบจะออก Session Token มีอายุจำกัด 2 ชั่วโมง (7200 วินาที)
- *    - สามารถสั่งออกจากระบบ (Logout) เพื่อเพิกถอน Token ได้ทันที
- * 3. การเปลี่ยนรหัสผ่านเจ้าหน้าที่:
- *    - สามารถเปลี่ยนรหัสผ่านได้ในเมนู Apps Script:
- *      Project Settings (การตั้งค่าโครงการ) > Script Properties (คุณสมบัติของสคริปต์)
- *      เพิ่ม Property ชื่อ: "ADMIN_PIN" และกำหนดรหัสผ่านใหม่
+ *    - มี Rate Limiting ล็อกชั่วคราว 5 นาที หากกรอกรหัสผ่านผิดติดต่อกัน 5 ครั้ง
+ *    - สามารถสั่งออกจากระบบ (Logout) หรือเปลี่ยนรหัสผ่านเพื่อเพิกถอน Token เก่าทั้งหมดได้ทันที
+ * 3. การตั้งรหัสผ่านครั้งแรกหรือกรณีลืมรหัสผ่าน (เฉพาะเจ้าของโครงการที่มีสิทธิ์เข้าถึง Google Account):
+ *    - วิธีที่ 1: เปิด Google Sheets > เมนู "🔐 ผู้ดูแลระบบ (Admin)" > "ตั้งรหัสผ่านเจ้าหน้าที่ใหม่"
+ *    - วิธีที่ 2: ใน Apps Script Editor > Project Settings > Script Properties >
+ *      เพิ่ม Property ชื่อ "ADMIN_RESET_PASSWORD" พร้อมรหัสผ่านใหม่ (อย่างน้อย 8 ตัวอักษร)
+ *      ระบบจะแปลงเป็น Hash ที่ปลอดภัยและลบ Property ข้อความปกติทิ้งอัตโนมัติทันทีที่เรียกใช้งาน
  * 
  * ชีตใน Google Sheets:
  * 1. Sheet "Activities" (บันทึกการลอยกระทง):
@@ -52,69 +55,372 @@ const HEADERS_ACTIVITIES = ['activity_id', 'created_at', 'krathong_type', 'wish'
 const HEADERS_SERVICE_CLICKS = ['event_id', 'created_at', 'account_status', 'service_key', 'service_name', 'event_type'];
 
 const SESSION_TTL_SECONDS = 7200; // 2 ชั่วโมง
+const MAX_FAILED_LOGIN_ATTEMPTS = 5;
+const LOGIN_ATTEMPT_WINDOW_MS = 15 * 60 * 1000; // 15 นาที
+const LOGIN_LOCKOUT_MS = 5 * 60 * 1000; // ล็อก 5 นาทีเมื่อผิดเกินกำหนด
+const HASH_ITERATIONS = 1000;
+
+const PROP_PASSWORD_HASH = 'ADMIN_PASSWORD_HASH';
+const PROP_PASSWORD_SALT = 'ADMIN_PASSWORD_SALT';
+const PROP_SESSION_EPOCH = 'ADMIN_SESSION_EPOCH';
+const PROP_ACTIVE_SESSIONS = 'ADMIN_ACTIVE_SESSIONS';
+const PROP_OWNER_RESET_TEMP = 'ADMIN_RESET_PASSWORD';
+const PROP_LEGACY_PIN_TEMP = 'ADMIN_PIN';
+const PROP_LOGIN_FAIL_STATE = 'ADMIN_LOGIN_FAIL_STATE';
 
 /**
- * ดึงรหัสผ่านเจ้าหน้าที่จาก Script Properties ฝั่ง Server
- * (ไม่เปิดเผยใน Source Code ฝั่ง Client)
+ * เพิ่มเมนูสำหรับเจ้าของ Google Sheets เพื่อตั้งรหัสผ่าน Admin ได้โดยไม่ต้องแก้ไขโค้ด
  */
-function getAdminSecretPin() {
+function onOpen() {
   try {
-    const props = PropertiesService.getScriptProperties();
-    const customPin = props.getProperty('ADMIN_PIN');
-    if (customPin && customPin.trim()) {
-      return customPin.trim();
-    }
-  } catch (e) {
-    // Fallback if properties service is unavailable
-  }
-  return '1662'; // ค่าเริ่มต้นปลอดภัยฝั่งเซิร์ฟเวอร์ (สามารถเปลี่ยนได้ใน Script Properties)
+    SpreadsheetApp.getUi()
+      .createMenu('🔐 ผู้ดูแลระบบ (Admin)')
+      .addItem('ตั้งรหัสผ่านเจ้าหน้าที่ใหม่', 'promptOwnerSetAdminPassword')
+      .addItem('เพิกถอน Session ทั้งหมด', 'ownerRevokeAllSessionsMenu')
+      .addToUi();
+  } catch (e) {}
 }
 
 /**
- * สร้างและบันทึก Session Token ฝั่ง Server
+ * Dialog สำหรับเจ้าของ Sheet ตั้งรหัสผ่านใหม่ (เข้าถึงได้เฉพาะผู้มีสิทธิ์แก้ไข Google Sheet)
+ */
+function promptOwnerSetAdminPassword() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.prompt(
+    'ตั้งค่ารหัสผ่านผู้ดูแลระบบ (/admin)',
+    'กรุณากำหนดรหัสผ่านเจ้าหน้าที่ใหม่ (แนะนำอย่างน้อย 8 ตัวอักษร):\n* รหัสผ่านจะถูกแปลงเป็น Salted SHA-256 Hash ฝั่งเซิร์ฟเวอร์ทันที',
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() !== ui.Button.OK) {
+    return;
+  }
+
+  const newPassword = String(response.getResponseText() || '').trim();
+  if (newPassword.length < 6) {
+    ui.alert('รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร (แนะนำ 8 ตัวอักษรขึ้นไป)');
+    return;
+  }
+
+  setAdminPasswordInternal(newPassword);
+  ui.alert('บันทึกรหัสผ่านผู้ดูแลระบบใหม่สำเร็จ (จัดเก็บแบบเข้ารหัส Hash และเพิกถอน Session เดิมทั้งหมดแล้ว)');
+}
+
+function ownerRevokeAllSessionsMenu() {
+  incrementSessionEpoch();
+  SpreadsheetApp.getUi().alert('เพิกถอน Session เจ้าหน้าที่ทั้งหมดเรียบร้อยแล้ว');
+}
+
+/**
+ * ฟังก์ชันสำหรับเจ้าของ Apps Script เรียกตั้งรหัสผ่านจาก Editor (ถ้าต้องการ)
+ * หมายเหตุ: ห้ามใส่รหัสผ่านค้างไว้ในโค้ดหลังรันเสร็จ
+ */
+function setAdminPassword(newPassword) {
+  const clean = String(newPassword || '').trim();
+  if (clean.length < 6) {
+    throw new Error('Password must be at least 6 characters.');
+  }
+  setAdminPasswordInternal(clean);
+  return 'Admin password updated securely.';
+}
+
+/**
+ * แปลง Byte Array เป็น Hex String
+ */
+function bytesToHex(bytes) {
+  return bytes
+    .map(function (b) {
+      const v = (b < 0 ? b + 256 : b).toString(16);
+      return v.length === 1 ? '0' + v : v;
+    })
+    .join('');
+}
+
+/**
+ * คำนวณ Salted Stretched SHA-256 Hash
+ */
+function computePasswordHash(password, salt) {
+  let digestBytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    salt + ':' + password,
+    Utilities.Charset.UTF_8
+  );
+  let hex = bytesToHex(digestBytes);
+
+  for (let i = 0; i < HASH_ITERATIONS; i++) {
+    digestBytes = Utilities.computeDigest(
+      Utilities.DigestAlgorithm.SHA_256,
+      salt + ':' + hex + ':' + password,
+      Utilities.Charset.UTF_8
+    );
+    hex = bytesToHex(digestBytes);
+  }
+  return hex;
+}
+
+/**
+ * เปรียบเทียบข้อความแบบ Constant-Time ป้องกัน Timing Attack
+ */
+function constantTimeEquals(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length || a.length === 0) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+function getSessionEpoch() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const raw = props.getProperty(PROP_SESSION_EPOCH);
+    const num = parseInt(raw || '1', 10);
+    return isNaN(num) || num < 1 ? 1 : num;
+  } catch (e) {
+    return 1;
+  }
+}
+
+function incrementSessionEpoch() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const nextEpoch = getSessionEpoch() + 1;
+    props.setProperty(PROP_SESSION_EPOCH, String(nextEpoch));
+    props.deleteProperty(PROP_ACTIVE_SESSIONS);
+    return nextEpoch;
+  } catch (e) {
+    return 1;
+  }
+}
+
+/**
+ * บันทึกรหัสผ่านใหม่แบบ Salted SHA-256 Hash และเพิกถอน Session เดิมทั้งหมด
+ */
+function setAdminPasswordInternal(plainPassword) {
+  const props = PropertiesService.getScriptProperties();
+  const salt = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '').substring(0, 16);
+  const hash = computePasswordHash(plainPassword, salt);
+
+  props.setProperties({
+    [PROP_PASSWORD_SALT]: salt,
+    [PROP_PASSWORD_HASH]: hash,
+  });
+
+  // ล้าง Property ชั่วคราวที่เป็น Plaintext หากมี
+  props.deleteProperty(PROP_OWNER_RESET_TEMP);
+  props.deleteProperty(PROP_LEGACY_PIN_TEMP);
+
+  // เพิกถอน Session เก่าทั้งหมดและรีเซ็ตตัวนับการล็อก
+  incrementSessionEpoch();
+  clearLoginRateLimit();
+}
+
+/**
+ * ตรวจสอบหากเจ้าของโครงการกำหนดรหัสผ่านใหม่ผ่าน Script Properties (ADMIN_RESET_PASSWORD หรือ ADMIN_PIN)
+ * จะทำการ Hash และลบรหัส Plaintext ออกจาก Script Properties ทันที
+ */
+function syncPendingOwnerPasswordSetup() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const pendingReset = props.getProperty(PROP_OWNER_RESET_TEMP);
+    const legacyPin = props.getProperty(PROP_LEGACY_PIN_TEMP);
+    const candidate = (pendingReset && pendingReset.trim()) || (legacyPin && legacyPin.trim()) || '';
+
+    if (candidate) {
+      setAdminPasswordInternal(candidate);
+    }
+  } catch (e) {}
+}
+
+/**
+ * ตรวจสอบความถูกต้องของรหัสผ่านฝั่ง Server (ไม่มี Hardcoded Fallback)
+ */
+function verifyAdminPassword(inputPassword) {
+  syncPendingOwnerPasswordSetup();
+
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const storedHash = props.getProperty(PROP_PASSWORD_HASH);
+    const storedSalt = props.getProperty(PROP_PASSWORD_SALT);
+
+    if (!storedHash || !storedSalt) {
+      return { valid: false, configured: false };
+    }
+
+    const candidateHash = computePasswordHash(inputPassword, storedSalt);
+    return {
+      valid: constantTimeEquals(candidateHash, storedHash),
+      configured: true,
+    };
+  } catch (e) {
+    return { valid: false, configured: false };
+  }
+}
+
+/**
+ * ระบบป้องกัน Brute-force / Rate Limiting ฝั่ง Server
+ */
+function getLoginFailState() {
+  try {
+    const cache = CacheService.getScriptCache();
+    const cached = cache.get(PROP_LOGIN_FAIL_STATE);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch (e) {}
+
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const raw = props.getProperty(PROP_LOGIN_FAIL_STATE);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch (e) {}
+
+  return { count: 0, firstAttemptAt: 0, lockUntil: 0 };
+}
+
+function saveLoginFailState(state) {
+  const serialized = JSON.stringify(state);
+  try {
+    const cache = CacheService.getScriptCache();
+    cache.put(PROP_LOGIN_FAIL_STATE, serialized, 900);
+  } catch (e) {}
+  try {
+    const props = PropertiesService.getScriptProperties();
+    props.setProperty(PROP_LOGIN_FAIL_STATE, serialized);
+  } catch (e) {}
+}
+
+function checkLoginRateLimit() {
+  const now = Date.now();
+  const state = getLoginFailState();
+
+  if (state.lockUntil && now < state.lockUntil) {
+    const remainingSec = Math.ceil((state.lockUntil - now) / 1000);
+    return { allowed: false, retryAfterSeconds: remainingSec };
+  }
+
+  if (state.lockUntil && now >= state.lockUntil) {
+    clearLoginRateLimit();
+  }
+
+  return { allowed: true, retryAfterSeconds: 0 };
+}
+
+function recordFailedLoginAttempt() {
+  const now = Date.now();
+  let state = getLoginFailState();
+
+  if (!state.firstAttemptAt || (now - state.firstAttemptAt) > LOGIN_ATTEMPT_WINDOW_MS) {
+    state = { count: 1, firstAttemptAt: now, lockUntil: 0 };
+  } else {
+    state.count = (state.count || 0) + 1;
+    if (state.count >= MAX_FAILED_LOGIN_ATTEMPTS) {
+      state.lockUntil = now + LOGIN_LOCKOUT_MS;
+    }
+  }
+
+  saveLoginFailState(state);
+  Utilities.sleep(800); // ชะลอความเร็วในการสุ่มรหัสผ่าน
+  return state;
+}
+
+function clearLoginRateLimit() {
+  try {
+    CacheService.getScriptCache().remove(PROP_LOGIN_FAIL_STATE);
+  } catch (e) {}
+  try {
+    PropertiesService.getScriptProperties().deleteProperty(PROP_LOGIN_FAIL_STATE);
+  } catch (e) {}
+}
+
+/**
+ * สร้างและบันทึก Session Token ฝั่ง Server (ผูกกับ Session Epoch และจำกัดอายุ 2 ชั่วโมง)
  */
 function generateSessionToken() {
-  const randomPart = Utilities.getUuid().replace(/-/g, '');
-  const timePart = Date.now().toString(36);
-  return 'AUTH_' + randomPart + '_' + timePart;
+  const part1 = Utilities.getUuid().replace(/-/g, '');
+  const part2 = Utilities.getUuid().replace(/-/g, '').substring(0, 16);
+  return 'AUTH_' + part1 + '_' + part2;
 }
 
 function registerSessionToken(token) {
   if (!token) return;
+  const now = Date.now();
+  const expiresAt = now + (SESSION_TTL_SECONDS * 1000);
+  const epoch = getSessionEpoch();
+
   try {
     const cache = CacheService.getScriptCache();
-    cache.put(token, 'valid', SESSION_TTL_SECONDS);
+    cache.put('SESS_' + token, String(epoch) + ':' + String(expiresAt), SESSION_TTL_SECONDS);
   } catch (e) {}
 
   try {
-    const userProps = PropertiesService.getUserProperties();
-    userProps.setProperty('SESS_' + token, Date.now().toString());
+    const props = PropertiesService.getScriptProperties();
+    const raw = props.getProperty(PROP_ACTIVE_SESSIONS);
+    let sessions = raw ? JSON.parse(raw) : {};
+    if (!sessions || typeof sessions !== 'object') sessions = {};
+
+    // ล้าง Session ที่หมดอายุหรือคนละ Epoch ออก
+    const pruned = {};
+    const keys = Object.keys(sessions);
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      const rec = sessions[k];
+      if (rec && rec.expiresAt > now && rec.epoch === epoch) {
+        pruned[k] = rec;
+      }
+    }
+
+    pruned[token] = { epoch: epoch, expiresAt: expiresAt };
+
+    // จำกัดจำนวน Session สูงสุดเพื่อไม่ให้ ScriptProperties เกินโควตา
+    const prunedKeys = Object.keys(pruned);
+    if (prunedKeys.length > 25) {
+      prunedKeys.sort(function (a, b) {
+        return (pruned[a].expiresAt || 0) - (pruned[b].expiresAt || 0);
+      });
+      for (let j = 0; j < prunedKeys.length - 25; j++) {
+        delete pruned[prunedKeys[j]];
+      }
+    }
+
+    props.setProperty(PROP_ACTIVE_SESSIONS, JSON.stringify(pruned));
   } catch (e) {}
 }
 
 function verifySessionToken(token) {
   if (!token || typeof token !== 'string') return false;
   const cleanToken = token.trim();
-  if (!cleanToken.startsWith('AUTH_')) return false;
+  if (!cleanToken.startsWith('AUTH_') || cleanToken.length < 24) return false;
+
+  const now = Date.now();
+  const currentEpoch = getSessionEpoch();
 
   try {
     const cache = CacheService.getScriptCache();
-    const status = cache.get(cleanToken);
-    if (status === 'valid') {
-      return true;
+    const cachedVal = cache.get('SESS_' + cleanToken);
+    if (cachedVal) {
+      const parts = cachedVal.split(':');
+      const tokenEpoch = parseInt(parts[0], 10);
+      const tokenExpires = parseInt(parts[1], 10);
+      if (tokenEpoch === currentEpoch && tokenExpires > now) {
+        return true;
+      } else {
+        cache.remove('SESS_' + cleanToken);
+      }
     }
   } catch (e) {}
 
   try {
-    const userProps = PropertiesService.getUserProperties();
-    const storedTime = userProps.getProperty('SESS_' + cleanToken);
-    if (storedTime) {
-      const createdTime = parseInt(storedTime, 10);
-      const maxAgeMs = SESSION_TTL_SECONDS * 1000;
-      if (Date.now() - createdTime < maxAgeMs) {
+    const props = PropertiesService.getScriptProperties();
+    const raw = props.getProperty(PROP_ACTIVE_SESSIONS);
+    if (raw) {
+      const sessions = JSON.parse(raw);
+      const rec = sessions && sessions[cleanToken];
+      if (rec && rec.epoch === currentEpoch && rec.expiresAt > now) {
         return true;
-      } else {
-        userProps.deleteProperty('SESS_' + cleanToken);
       }
     }
   } catch (e) {}
@@ -126,13 +432,19 @@ function revokeSessionToken(token) {
   if (!token) return;
   const cleanToken = String(token).trim();
   try {
-    const cache = CacheService.getScriptCache();
-    cache.remove(cleanToken);
+    CacheService.getScriptCache().remove('SESS_' + cleanToken);
   } catch (e) {}
 
   try {
-    const userProps = PropertiesService.getUserProperties();
-    userProps.deleteProperty('SESS_' + cleanToken);
+    const props = PropertiesService.getScriptProperties();
+    const raw = props.getProperty(PROP_ACTIVE_SESSIONS);
+    if (raw) {
+      const sessions = JSON.parse(raw);
+      if (sessions && sessions[cleanToken]) {
+        delete sessions[cleanToken];
+        props.setProperty(PROP_ACTIVE_SESSIONS, JSON.stringify(sessions));
+      }
+    }
   } catch (e) {}
 }
 
@@ -451,7 +763,8 @@ function doGet(e) {
 
 /**
  * Handle POST Requests:
- * - action: adminLogin (เข้าสู่ระบบเจ้าหน้าที่ด้วย PIN ฝั่ง Server)
+ * - action: adminLogin (เข้าสู่ระบบเจ้าหน้าที่ฝั่ง Server พร้อม Rate Limit)
+ * - action: changeAdminPassword (เปลี่ยนรหัสผ่านโดยเจ้าหน้าที่ที่ยืนยันตัวตนแล้ว)
  * - action: adminLogout (ออกจากระบบและทำลาย Token)
  * - action: serviceClick (บันทึกการเลือกบริการออนไลน์)
  * - floatKrathong (บันทึกกิจกรรมการลอยกระทง)
@@ -472,10 +785,38 @@ function doPost(e) {
   // ระบบที่ 1: การยืนยันตัวตนเจ้าหน้าที่ (Staff Authentication)
   // -------------------------------------------------------------
   if (payload.action === 'adminLogin') {
-    const inputPin = String(payload.pin || '').trim();
-    const correctPin = getAdminSecretPin();
+    const rateCheck = checkLoginRateLimit();
+    if (!rateCheck.allowed) {
+      return createJsonResponse({
+        success: false,
+        authenticated: false,
+        rateLimited: true,
+        retryAfterSeconds: rateCheck.retryAfterSeconds,
+        error: 'มีการพยายามเข้าสู่ระบบไม่ถูกต้องหลายครั้ง กรุณารอ ' + Math.ceil(rateCheck.retryAfterSeconds / 60) + ' นาทีแล้วลองใหม่อีกครั้ง',
+      });
+    }
 
-    if (inputPin && inputPin === correctPin) {
+    const inputPassword = String(payload.password || payload.pin || '').trim();
+    if (!inputPassword) {
+      return createJsonResponse({
+        success: false,
+        authenticated: false,
+        error: 'กรุณากรอกรหัสผ่านเจ้าหน้าที่',
+      });
+    }
+
+    const checkResult = verifyAdminPassword(inputPassword);
+    if (!checkResult.configured) {
+      return createJsonResponse({
+        success: false,
+        authenticated: false,
+        setupRequired: true,
+        error: 'ระบบยังไม่ได้ตั้งค่ารหัสผ่านผู้ดูแลระบบ กรุณาให้เจ้าของโครงการกำหนดรหัสผ่านฝั่งเซิร์ฟเวอร์ก่อนเข้าใช้งาน',
+      });
+    }
+
+    if (checkResult.valid) {
+      clearLoginRateLimit();
       const token = generateSessionToken();
       registerSessionToken(token);
 
@@ -487,13 +828,76 @@ function doPost(e) {
         message: 'ยืนยันตัวตนเจ้าหน้าที่สำเร็จ',
       });
     } else {
-      Utilities.sleep(600); // ป้องกัน Brute-force Timing Attacks
+      const failState = recordFailedLoginAttempt();
+      const remainingAttempts = Math.max(0, MAX_FAILED_LOGIN_ATTEMPTS - (failState.count || 0));
       return createJsonResponse({
         success: false,
         authenticated: false,
-        error: 'รหัสผ่านเจ้าหน้าที่ไม่ถูกต้อง กรุณาตรวจสอบและลองใหม่อีกครั้ง',
+        rateLimited: remainingAttempts === 0,
+        error: remainingAttempts === 0
+          ? 'กรอกรหัสผ่านไม่ถูกต้องเกินจำนวนที่กำหนด ระบบระงับการเข้าสู่ระบบชั่วคราว 5 นาที'
+          : 'รหัสผ่านเจ้าหน้าที่ไม่ถูกต้อง กรุณาตรวจสอบและลองใหม่อีกครั้ง',
       });
     }
+  }
+
+  // -------------------------------------------------------------
+  // ระบบที่ 1.5: เปลี่ยนรหัสผ่านโดยเจ้าหน้าที่ที่ยืนยันตัวตนแล้ว
+  // -------------------------------------------------------------
+  if (payload.action === 'changeAdminPassword') {
+    const authToken = String(payload.authToken || payload.token || '').trim();
+    if (!verifySessionToken(authToken)) {
+      return createJsonResponse({
+        success: false,
+        authenticated: false,
+        error: 'เซสชันเจ้าหน้าที่หมดอายุหรือไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่',
+      });
+    }
+
+    const currentPassword = String(payload.currentPassword || '').trim();
+    const newPassword = String(payload.newPassword || '').trim();
+
+    if (!currentPassword || !newPassword) {
+      return createJsonResponse({
+        success: false,
+        error: 'กรุณากรอกรหัสผ่านปัจจุบันและรหัสผ่านใหม่ให้ครบถ้วน',
+      });
+    }
+
+    if (newPassword.length < 8 || newPassword.length > 128) {
+      return createJsonResponse({
+        success: false,
+        error: 'รหัสผ่านใหม่ต้องมีความยาว 8 - 128 ตัวอักษร',
+      });
+    }
+
+    if (currentPassword === newPassword) {
+      return createJsonResponse({
+        success: false,
+        error: 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านปัจจุบัน',
+      });
+    }
+
+    const verifyCurrent = verifyAdminPassword(currentPassword);
+    if (!verifyCurrent.configured || !verifyCurrent.valid) {
+      Utilities.sleep(600);
+      return createJsonResponse({
+        success: false,
+        error: 'รหัสผ่านปัจจุบันไม่ถูกต้อง',
+      });
+    }
+
+    setAdminPasswordInternal(newPassword);
+    const newToken = generateSessionToken();
+    registerSessionToken(newToken);
+
+    return createJsonResponse({
+      success: true,
+      authenticated: true,
+      authToken: newToken,
+      expiresAt: Date.now() + (SESSION_TTL_SECONDS * 1000),
+      message: 'เปลี่ยนรหัสผ่านเจ้าหน้าที่เรียบร้อยแล้ว (Session เดิมทั้งหมดถูกเพิกถอน)',
+    });
   }
 
   // -------------------------------------------------------------

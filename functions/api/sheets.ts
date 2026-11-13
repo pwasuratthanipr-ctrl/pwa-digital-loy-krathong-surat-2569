@@ -81,7 +81,7 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
         forwardUrl.searchParams.set(key, val);
       });
 
-      // ดึง authToken จาก Header หากมี
+      // ดึง authToken จาก Header หากมี (ไม่เปิดเผยใน URL ฝั่ง Client)
       const authTokenHeader = request.headers.get('x-auth-token');
       if (authTokenHeader && !forwardUrl.searchParams.has('authToken')) {
         forwardUrl.searchParams.set('authToken', authTokenHeader);
@@ -101,7 +101,8 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
         headers: {
           'Content-Type': 'application/json;charset=utf-8',
           'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+          'Pragma': 'no-cache',
         },
       });
     }
@@ -128,6 +129,8 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
         headers: {
           'Content-Type': 'application/json;charset=utf-8',
           'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+          'Pragma': 'no-cache',
         },
       });
     }

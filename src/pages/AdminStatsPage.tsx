@@ -61,6 +61,14 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
   const [testResult, setTestResult] = useState<{ success?: boolean; message?: string } | null>(null);
   const [testingConnection, setTestingConnection] = useState<boolean>(false);
 
+  // Authenticated Admin Password Change state
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState<boolean>(false);
+  const [currentPasswordInput, setCurrentPasswordInput] = useState<string>('');
+  const [newPasswordInput, setNewPasswordInput] = useState<string>('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState<string>('');
+  const [changingPassword, setChangingPassword] = useState<boolean>(false);
+  const [passwordChangeFeedback, setPasswordChangeFeedback] = useState<{ success?: boolean; message?: string } | null>(null);
+
   const loadRealAdminData = async () => {
     if (!googleSheetsService.isAuthenticated()) {
       setIsAuthenticated(false);
@@ -71,10 +79,11 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
     setLoading(true);
     try {
       const data = await StorageService.getAdminActivities();
-      if (!data.success && (data as any).authenticated === false) {
+      if (!data.success && data.authenticated === false) {
         setIsAuthenticated(false);
         setAdminData(null);
-        setPinError('เซสชันเจ้าหน้าที่หมดอายุ กรุณาเข้าสู่ระบบใหม่');
+        setShowChangePasswordModal(false);
+        setPinError(data.error || 'เซสชันเจ้าหน้าที่หมดอายุ กรุณาเข้าสู่ระบบใหม่');
         return;
       }
       setAdminData(data);
@@ -152,6 +161,80 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
     setAdminData(null);
     setPinInput('');
     setPinError('');
+    setShowChangePasswordModal(false);
+    setCurrentPasswordInput('');
+    setNewPasswordInput('');
+    setConfirmPasswordInput('');
+    setPasswordChangeFeedback(null);
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordChangeFeedback(null);
+
+    const currentPw = currentPasswordInput.trim();
+    const newPw = newPasswordInput.trim();
+    const confirmPw = confirmPasswordInput.trim();
+
+    if (!currentPw || !newPw || !confirmPw) {
+      setPasswordChangeFeedback({ success: false, message: 'กรุณากรอกข้อมูลรหัสผ่านให้ครบทุกช่อง' });
+      return;
+    }
+
+    if (newPw.length < 8 || newPw.length > 128) {
+      setPasswordChangeFeedback({ success: false, message: 'รหัสผ่านใหม่ต้องมีความยาวอย่างน้อย 8 ตัวอักษร (สูงสุด 128 ตัวอักษร)' });
+      return;
+    }
+
+    if (newPw !== confirmPw) {
+      setPasswordChangeFeedback({ success: false, message: 'การยืนยันรหัสผ่านใหม่ไม่ตรงกัน' });
+      return;
+    }
+
+    if (currentPw === newPw) {
+      setPasswordChangeFeedback({ success: false, message: 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านปัจจุบัน' });
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const res = await googleSheetsService.changeAdminPassword(currentPw, newPw);
+      setCurrentPasswordInput('');
+      setNewPasswordInput('');
+      setConfirmPasswordInput('');
+
+      if (res.authenticated === false) {
+        setIsAuthenticated(false);
+        setAdminData(null);
+        setShowChangePasswordModal(false);
+        setPinError(res.error || 'เซสชันเจ้าหน้าที่หมดอายุ กรุณาเข้าสู่ระบบใหม่');
+        return;
+      }
+
+      if (res.success) {
+        soundService.playCelebration();
+        setPasswordChangeFeedback({
+          success: true,
+          message: res.message || 'เปลี่ยนรหัสผ่านเจ้าหน้าที่สำเร็จ (Session เก่าทั้งหมดถูกยกเลิกแล้ว)',
+        });
+      } else {
+        soundService.playWaterDrop();
+        setPasswordChangeFeedback({
+          success: false,
+          message: res.error || 'ไม่สามารถเปลี่ยนรหัสผ่านได้',
+        });
+      }
+    } catch {
+      setCurrentPasswordInput('');
+      setNewPasswordInput('');
+      setConfirmPasswordInput('');
+      setPasswordChangeFeedback({
+        success: false,
+        message: 'เกิดข้อผิดพลาดในการเชื่อมต่อเพื่อเปลี่ยนรหัสผ่าน',
+      });
+    } finally {
+      setChangingPassword(false);
+    }
   };
 
   const [copiedUrl, setCopiedUrl] = useState<boolean>(false);
@@ -273,11 +356,12 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
             <div className="space-y-1 text-left">
               <label className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
                 <KeyRound className="w-3.5 h-3.5 text-amber-300" />
-                <span>รหัสผ่านเจ้าหน้าที่ (PIN Code):</span>
+                <span>รหัสผ่านเจ้าหน้าที่ (Admin Password):</span>
               </label>
               <input
                 type="password"
-                maxLength={10}
+                maxLength={128}
+                autoComplete="current-password"
                 value={pinInput}
                 disabled={loggingIn}
                 onChange={(e) => {
@@ -289,7 +373,7 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
                 autoFocus
               />
               {pinError && (
-                <p className="text-xs text-rose-400 mt-1">{pinError}</p>
+                <p className="text-xs text-rose-400 mt-1 leading-relaxed">{pinError}</p>
               )}
             </div>
 
@@ -392,6 +476,18 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
         {/* Action Controls */}
         <div className="flex flex-wrap items-center gap-2.5">
           <button
+            onClick={() => {
+              setShowChangePasswordModal(!showChangePasswordModal);
+              setPasswordChangeFeedback(null);
+            }}
+            className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-200 border border-amber-500/40 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+            title="เปลี่ยนรหัสผ่านเจ้าหน้าที่ (เฉพาะผู้ที่ยืนยันตัวตนแล้ว)"
+          >
+            <KeyRound className="w-3.5 h-3.5 text-amber-300" />
+            <span>เปลี่ยนรหัสผ่าน</span>
+          </button>
+
+          <button
             onClick={() => setShowConfigModal(!showConfigModal)}
             className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-sky-200 border border-cyan-500/40 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
             title="ตั้งค่าและตรวจสอบการเชื่อมต่อ Google Apps Script API"
@@ -437,6 +533,129 @@ export const AdminStatsPage: React.FC<AdminStatsPageProps> = ({ onNavigate }) =>
           </button>
         </div>
       </div>
+
+      {/* Authenticated Admin Password Change Panel */}
+      {showChangePasswordModal && (
+        <div className="bg-gradient-to-b from-slate-900 via-[#07253d] to-slate-900 p-6 sm:p-7 rounded-3xl border-2 border-amber-400/50 shadow-2xl space-y-5 animate-in fade-in duration-200">
+          <div className="flex items-start justify-between border-b border-amber-500/20 pb-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-400/20 text-amber-300 flex items-center justify-center border border-amber-400/30">
+                  <KeyRound className="w-4 h-4" />
+                </div>
+                <h3 className="font-heading font-bold text-lg text-white">
+                  เปลี่ยนรหัสผ่านผู้ดูแลระบบ (Server-Side Hash)
+                </h3>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                รหัสผ่านใหม่จะถูกจัดเก็บแบบ Salted SHA-256 Hash ฝั่งเซิร์ฟเวอร์ และเพิกถอน Session อื่นทั้งหมดทันที
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setShowChangePasswordModal(false);
+                setCurrentPasswordInput('');
+                setNewPasswordInput('');
+                setConfirmPasswordInput('');
+                setPasswordChangeFeedback(null);
+              }}
+              className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors cursor-pointer"
+            >
+              ✕ ปิด
+            </button>
+          </div>
+
+          <form onSubmit={handleChangePassword} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-300 block">
+                รหัสผ่านปัจจุบัน:
+              </label>
+              <input
+                type="password"
+                maxLength={128}
+                autoComplete="current-password"
+                value={currentPasswordInput}
+                disabled={changingPassword}
+                onChange={(e) => setCurrentPasswordInput(e.target.value)}
+                placeholder="กรอกรหัสผ่านปัจจุบัน"
+                className="w-full py-2.5 px-3.5 rounded-xl bg-slate-950 border border-cyan-500/40 text-xs font-mono text-amber-300 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-300 block">
+                รหัสผ่านใหม่ (8 - 128 ตัวอักษร):
+              </label>
+              <input
+                type="password"
+                maxLength={128}
+                autoComplete="new-password"
+                value={newPasswordInput}
+                disabled={changingPassword}
+                onChange={(e) => setNewPasswordInput(e.target.value)}
+                placeholder="อย่างน้อย 8 ตัวอักษร"
+                className="w-full py-2.5 px-3.5 rounded-xl bg-slate-950 border border-cyan-500/40 text-xs font-mono text-amber-300 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-300 block">
+                ยืนยันรหัสผ่านใหม่:
+              </label>
+              <input
+                type="password"
+                maxLength={128}
+                autoComplete="new-password"
+                value={confirmPasswordInput}
+                disabled={changingPassword}
+                onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                placeholder="พิมพ์รหัสผ่านใหม่อีกครั้ง"
+                className="w-full py-2.5 px-3.5 rounded-xl bg-slate-950 border border-cyan-500/40 text-xs font-mono text-amber-300 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+
+            <div className="md:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+              <p className="text-[11px] text-slate-400">
+                แนะนำให้ใช้อักษรภาษาอังกฤษ ตัวเลข และสัญลักษณ์ผสมกันอย่างน้อย 8 ตัวอักษร
+              </p>
+              <button
+                type="submit"
+                disabled={changingPassword}
+                className="py-2.5 px-5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-heading font-bold shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60 shrink-0"
+              >
+                {changingPassword ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>กำลังบันทึก...</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>บันทึกรหัสผ่านใหม่</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+
+          {passwordChangeFeedback && (
+            <div
+              className={`p-3.5 rounded-2xl text-xs flex items-center gap-2.5 ${
+                passwordChangeFeedback.success
+                  ? 'bg-emerald-950/70 border border-emerald-500/40 text-emerald-200'
+                  : 'bg-rose-950/70 border border-rose-500/40 text-rose-200'
+              }`}
+            >
+              {passwordChangeFeedback.success ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              )}
+              <span>{passwordChangeFeedback.message}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Google Apps Script API Configuration Panel (Toggleable) */}
       {showConfigModal && (

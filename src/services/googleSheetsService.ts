@@ -96,7 +96,12 @@ class GoogleSheetsService {
    * ยืนยันตัวตนเจ้าหน้าที่ผ่าน Server-side Authentication
    * ส่งรหัสผ่านทาง HTTPS POST Body (ไม่ส่งใน Query String หรือ URL)
    */
-  public async loginAdmin(pin: string): Promise<{ success: boolean; error?: string }> {
+  public async loginAdmin(pin: string): Promise<{
+    success: boolean;
+    error?: string;
+    rateLimited?: boolean;
+    setupRequired?: boolean;
+  }> {
     const cleanPin = (pin || '').trim();
     if (!cleanPin) {
       return { success: false, error: 'กรุณากรอกรหัสผ่านเจ้าหน้าที่' };
@@ -115,6 +120,7 @@ class GoogleSheetsService {
         method: 'POST',
         body: JSON.stringify({
           action: 'adminLogin',
+          password: cleanPin,
           pin: cleanPin,
         }),
       });
@@ -128,13 +134,90 @@ class GoogleSheetsService {
       } else {
         return {
           success: false,
+          rateLimited: Boolean(json?.rateLimited),
+          setupRequired: Boolean(json?.setupRequired),
           error: json?.error || 'รหัสผ่านเจ้าหน้าที่ไม่ถูกต้อง กรุณาตรวจสอบและลองใหม่อีกครั้ง',
         };
       }
     } catch (err: any) {
       return {
         success: false,
-        error: 'ไม่สามารถติดต่อเซิร์ฟเวอร์เพื่อตรวจสอบสิทธิ์ได้: ' + (err.message || ''),
+        error: 'ไม่สามารถติดต่อเซิร์ฟเวอร์เพื่อตรวจสอบสิทธิ์ได้ กรุณาลองใหม่อีกครั้ง',
+      };
+    }
+  }
+
+  /**
+   * เปลี่ยนรหัสผ่านเจ้าหน้าที่ (เฉพาะผู้ที่เข้าสู่ระบบและมี Session Token ที่ถูกต้องเท่านั้น)
+   */
+  public async changeAdminPassword(
+    currentPassword: string,
+    newPassword: string
+  ): Promise<{ success: boolean; authenticated?: boolean; message?: string; error?: string }> {
+    const token = this.getAdminAuthToken();
+    if (!token) {
+      return {
+        success: false,
+        authenticated: false,
+        error: 'เซสชันเจ้าหน้าที่หมดอายุ กรุณาเข้าสู่ระบบใหม่',
+      };
+    }
+
+    const cleanCurrent = (currentPassword || '').trim();
+    const cleanNew = (newPassword || '').trim();
+
+    if (!cleanCurrent || !cleanNew) {
+      return { success: false, error: 'กรุณากรอกรหัสผ่านปัจจุบันและรหัสผ่านใหม่ให้ครบถ้วน' };
+    }
+    if (cleanNew.length < 8 || cleanNew.length > 128) {
+      return { success: false, error: 'รหัสผ่านใหม่ต้องมีความยาว 8 - 128 ตัวอักษร' };
+    }
+    if (cleanCurrent === cleanNew) {
+      return { success: false, error: 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านปัจจุบัน' };
+    }
+
+    try {
+      const json = await this.requestApi('', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'changeAdminPassword',
+          authToken: token,
+          currentPassword: cleanCurrent,
+          newPassword: cleanNew,
+        }),
+      });
+
+      if (json && json.authenticated === false) {
+        sessionStorage.removeItem(SESSION_TOKEN_KEY);
+        sessionStorage.removeItem(SESSION_EXPIRES_KEY);
+        return {
+          success: false,
+          authenticated: false,
+          error: json?.error || 'เซสชันเจ้าหน้าที่หมดอายุ กรุณาเข้าสู่ระบบใหม่',
+        };
+      }
+
+      if (json && json.success) {
+        if (json.authToken) {
+          const expiresAt = json.expiresAt || (Date.now() + 2 * 60 * 60 * 1000);
+          sessionStorage.setItem(SESSION_TOKEN_KEY, json.authToken);
+          sessionStorage.setItem(SESSION_EXPIRES_KEY, expiresAt.toString());
+        }
+        return {
+          success: true,
+          authenticated: true,
+          message: json.message || 'เปลี่ยนรหัสผ่านเจ้าหน้าที่สำเร็จ',
+        };
+      }
+
+      return {
+        success: false,
+        error: json?.error || 'ไม่สามารถเปลี่ยนรหัสผ่านได้ (กรุณาตรวจสอบว่าได้อัปเดต Code.gs เวอร์ชันล่าสุดแล้ว)',
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: 'เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์เพื่อเปลี่ยนรหัสผ่าน',
       };
     }
   }
@@ -151,9 +234,8 @@ class GoogleSheetsService {
 
     const apiUrl = this.getApiUrl();
     if (apiUrl && currentToken) {
-      fetch(apiUrl, {
+      this.requestApi('', {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           action: 'adminLogout',
           authToken: currentToken,
@@ -288,7 +370,8 @@ class GoogleSheetsService {
         body: options.body,
       });
 
-      if (proxyRes.ok) {
+      const contentType = proxyRes.headers.get('content-type') || '';
+      if (proxyRes.ok || (proxyRes.status >= 400 && proxyRes.status < 500 && contentType.includes('application/json'))) {
         const text = await proxyRes.text();
         const json = JSON.parse(text);
         if (json && typeof json === 'object') {
@@ -305,9 +388,16 @@ class GoogleSheetsService {
     }
 
     let directFullUrl = directUrl;
-    if (options.method === 'GET' && cleanQuery) {
-      const glue = directUrl.includes('?') ? '&' : '?';
-      directFullUrl = `${directUrl}${glue}${cleanQuery}`;
+    if (options.method === 'GET') {
+      const params = new URLSearchParams(cleanQuery);
+      if (authToken && !params.has('authToken')) {
+        params.set('authToken', authToken);
+      }
+      const qs = params.toString();
+      if (qs) {
+        const glue = directUrl.includes('?') ? '&' : '?';
+        directFullUrl = `${directUrl}${glue}${qs}`;
+      }
     }
 
     const response = await fetch(directFullUrl, {
@@ -696,6 +786,7 @@ class GoogleSheetsService {
     if (!this.isAuthenticated()) {
       return {
         success: false,
+        authenticated: false,
         totalFloated: 0,
         byType: {},
         countsByType: {},
@@ -703,6 +794,7 @@ class GoogleSheetsService {
         allActivities: [],
         serviceStats: {
           success: false,
+          authenticated: false,
           totalEvents: 0,
           noAccountCount: 0,
           hasAccountCount: 0,
@@ -735,9 +827,8 @@ class GoogleSheetsService {
     }
 
     try {
-      const token = this.getAdminAuthToken();
       const ts = Date.now();
-      const query = `action=getAdminData&authToken=${encodeURIComponent(token || '')}&_t=${ts}`;
+      const query = `action=getAdminData&_t=${ts}`;
       const json = await this.requestApi(query, {
         method: 'GET',
       });
@@ -746,13 +837,23 @@ class GoogleSheetsService {
         // เซสชันถูกปฏิเสธจาก Server ล้างเซสชันทันที
         sessionStorage.removeItem(SESSION_TOKEN_KEY);
         sessionStorage.removeItem(SESSION_EXPIRES_KEY);
-        throw new Error('เซสชันเจ้าหน้าที่หมดอายุหรือไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่');
+        return {
+          success: false,
+          authenticated: false,
+          totalFloated: 0,
+          byType: {},
+          countsByType: {},
+          lastUpdated: null,
+          allActivities: [],
+          error: 'เซสชันเจ้าหน้าที่หมดอายุหรือไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่',
+        };
       }
 
       const parsed = this.parseApiResponse(json);
 
       return {
         success: parsed.success,
+        authenticated: true,
         totalFloated: parsed.totalFloated,
         byType: parsed.byType,
         countsByType: parsed.byType,
@@ -1007,9 +1108,8 @@ class GoogleSheetsService {
     }
 
     try {
-      const token = this.getAdminAuthToken();
       const ts = Date.now();
-      const query = `action=getServiceStats&authToken=${encodeURIComponent(token || '')}&_t=${ts}`;
+      const query = `action=getServiceStats&_t=${ts}`;
       const json = await this.requestApi(query, {
         method: 'GET',
       });
@@ -1017,11 +1117,28 @@ class GoogleSheetsService {
       if (json && json.authenticated === false) {
         sessionStorage.removeItem(SESSION_TOKEN_KEY);
         sessionStorage.removeItem(SESSION_EXPIRES_KEY);
-        throw new Error('เซสชันเจ้าหน้าที่หมดอายุหรือไม่ถูกต้อง');
+        return {
+          success: false,
+          authenticated: false,
+          totalEvents: 0,
+          noAccountCount: 0,
+          hasAccountCount: 0,
+          clicksPwaPlusLife: 0,
+          clicksLineOfficial: 0,
+          clicksOnlinePayment: 0,
+          totalServiceClicks: 0,
+          completedRegistrationCount: 0,
+          lastUpdated: null,
+          recentEvents: [],
+          totalClicks: 0,
+          byService: { app: 0, line: 0, web: 0 },
+          recentClicks: [],
+          error: 'เซสชันเจ้าหน้าที่หมดอายุหรือไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่',
+        };
       }
 
       const parsed = this.parseApiResponse(json);
-      return parsed.serviceStats;
+      return { ...parsed.serviceStats, authenticated: true };
     } catch (err: any) {
       return {
         success: false,

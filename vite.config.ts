@@ -28,10 +28,15 @@ function devSheetsProxyPlugin() {
           if (req.method === 'GET') {
             const forward = new URL(targetUrl);
             incoming.searchParams.forEach((val, key) => forward.searchParams.set(key, val));
+            const authTokenHeader = req.headers['x-auth-token'];
+            if (typeof authTokenHeader === 'string' && authTokenHeader && !forward.searchParams.has('authToken')) {
+              forward.searchParams.set('authToken', authTokenHeader);
+            }
             const response = await fetch(forward.toString(), { redirect: 'follow' });
             const data = await response.text();
             res.statusCode = response.status;
-            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Content-Type', 'application/json;charset=utf-8');
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, private');
             res.end(data);
             return;
           }
@@ -48,7 +53,8 @@ function devSheetsProxyPlugin() {
               });
               const data = await response.text();
               res.statusCode = response.status;
-              res.setHeader('Content-Type', 'application/json');
+              res.setHeader('Content-Type', 'application/json;charset=utf-8');
+              res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, private');
               res.end(data);
             });
             return;
